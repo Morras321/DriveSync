@@ -1,0 +1,26 @@
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables (security sensitive)
+.env
+.env.local
+.env.*.local
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# IDE-specific (optional but recommended)
+.vscode/
+.idea/
+
+# Run sripts
+run.bat
+run.sh
+
+# Default download directories
+music_downloads/
+playlists/
