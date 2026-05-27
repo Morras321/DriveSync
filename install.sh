@@ -129,7 +129,7 @@ fi
 
 source venv/bin/activate
 echo "🎵 Starting DriveSync..."
-python backend/drivesync.py "$@"
+python backend/main.py "$@"
 deactivate
 RUNEOF
 
