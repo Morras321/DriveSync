@@ -1,22 +1,16 @@
-# =============================================================================
-# DriveSync Installer for Windows (PowerShell)
-# =============================================================================
-# This script creates a Python virtual environment and installs all dependencies.
-
-param(
-    [switch]$NoFfmpeg
-)
+$ErrorActionPreference = "Stop"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  DriveSync - Windows Installer" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Get script directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
-# Check Python
+# ---- Check Python ----
+
+Write-Host "Checking for Python..." -ForegroundColor Yellow
 $PythonCmd = $null
 foreach ($cmd in @("python", "python3")) {
     try {
@@ -25,126 +19,172 @@ foreach ($cmd in @("python", "python3")) {
             $PythonCmd = $cmd
             break
         }
-    } catch {}
+    } catch {
+        continue
+    }
 }
 
 if (-not $PythonCmd) {
-    Write-Host "❌ Python not found. Please install Python 3.9+ from:" -ForegroundColor Red
-    Write-Host "   https://www.python.org/downloads/"
-    Write-Host ""
-    Write-Host "   Make sure to check 'Add Python to PATH' during installation." -ForegroundColor Yellow
+    Write-Host "Python not found. Please install Python 3.9+ from:" -ForegroundColor Red
+    Write-Host "  https://python.org"
     exit 1
 }
 
 $PyVersion = & $PythonCmd --version 2>&1
-Write-Host "✅ Found Python: $PyVersion" -ForegroundColor Green
+Write-Host "Found Python: $PyVersion" -ForegroundColor Green
 
-# Check ffmpeg
-if (-not $NoFfmpeg) {
-    try {
-        $ffVer = & ffmpeg -version 2>&1
-        Write-Host "✅ Found ffmpeg" -ForegroundColor Green
-    } catch {
-        Write-Host "⚠️  ffmpeg not found." -ForegroundColor Yellow
-        Write-Host "   Download from: https://www.gyan.dev/ffmpeg/builds/ (ffmpeg-release-essentials.zip)"
-        Write-Host "   Extract and add the 'bin' folder to your PATH."
-        Write-Host "   Or use: winget install Gyan.FFmpeg" -ForegroundColor Cyan
-        Write-Host ""
-        $choice = Read-Host "   Continue without ffmpeg? (y/N)"
-        if ($choice -ne "y" -and $choice -ne "Y") {
-            exit 1
-        }
+# ---- Check FFmpeg ----
+
+Write-Host "Checking for FFmpeg..." -ForegroundColor Yellow
+try {
+    $ffVer = & ffmpeg -version 2>&1
+    Write-Host "Found FFmpeg" -ForegroundColor Green
+} catch {
+    Write-Host "FFmpeg not found. Download from:" -ForegroundColor Yellow
+    Write-Host "  https://gyan.dev"
+    Write-Host ""
+    $choice = Read-Host "Continue without FFmpeg? (y/N)"
+    if ($choice -ne "y" -and $choice -ne "Y") {
+        exit 1
     }
 }
 
-# Create virtual environment
+# ---- Create virtual environment ----
+
 Write-Host ""
-Write-Host "📦 Creating Python virtual environment..." -ForegroundColor Yellow
+Write-Host "Creating Python virtual environment..." -ForegroundColor Yellow
 if (Test-Path "venv") {
-    Write-Host "   Removing existing virtual environment..."
-    Remove-Item -Recurse -Force "venv"
+    Write-Host "  Removing old virtual environment..."
+    Remove-Item -Recurse -Force "venv" -ErrorAction SilentlyContinue
 }
 
-# Try creating venv
-try {
-    & $PythonCmd -m venv venv
-    Write-Host "✅ Virtual environment created" -ForegroundColor Green
-} catch {
-    Write-Host "❌ Failed to create virtual environment." -ForegroundColor Red
-    Write-Host "   Try installing: pip install virtualenv"
+& $PythonCmd -m venv venv
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to create virtual environment" -ForegroundColor Red
     exit 1
 }
 
-# Activate and install dependencies
+if (-not (Test-Path "venv/Scripts/python.exe")) {
+    Write-Host "Virtual environment was not created properly" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Virtual environment created" -ForegroundColor Green
+
+# ---- Install dependencies ----
+
 Write-Host ""
-Write-Host "📦 Installing Python dependencies..." -ForegroundColor Yellow
+Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 
-$Activate = Join-Path $ScriptDir "venv\Scripts\Activate.ps1"
-& $Activate
+# Use a string array joined by slashes to guarantee compatibility across all PowerShell versions
+$VenvPip = "$ScriptDir\venv\Scripts\pip.exe"
+$VenvPython = "$ScriptDir\venv\Scripts\python.exe"
 
-# Upgrade pip
-pip install --upgrade pip
+Write-Host "  Upgrading pip..."
+# Temporarily allow errors so pip warnings do not crash the script
+$OldPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $VenvPython -m pip install --upgrade pip > $null 2>&1
+$ErrorActionPreference = $OldPreference
 
-# Install core dependencies
-Write-Host "   Installing Flask, yt-dlp, mutagen, etc..." -ForegroundColor Gray
-pip install flask flask-cors yt-dlp mutagen pillow requests
-
-# Verify installation
-Write-Host ""
-Write-Host "🔍 Verifying installation..." -ForegroundColor Yellow
-try {
-    python -c "
-import flask
-import yt_dlp
-import mutagen
-from PIL import Image
-import requests
-print('✅ Flask:', flask.__version__)
-print('✅ yt-dlp:', yt_dlp.__version__)
-print('✅ Mutagen:', mutagen.__version__)
-print('✅ Pillow:', Image.__version__)
-print('✅ Requests:', requests.__version__)
-"
-    Write-Host "✅ All dependencies installed successfully!" -ForegroundColor Green
-} catch {
-    Write-Host "❌ Some packages failed to verify." -ForegroundColor Red
-    Write-Host "   Check the error above and try running: pip install -r requirements.txt"
+Write-Host "  Installing flask, yt-dlp, mutagen, pillow, requests..."
+& $VenvPip install flask flask-cors yt-dlp mutagen pillow requests 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Package installation failed" -ForegroundColor Red
+    Write-Host "Try manually: $VenvPip install -r requirements.txt"
+    exit 1
 }
 
-# Create directories
-New-Item -ItemType Directory -Force -Path "music_downloads\.thumbnails" | Out-Null
+# ---- Verify installation ----
+# Write a temp Python script to avoid all PowerShell quoting issues
+
+Write-Host ""
+Write-Host "Verifying installation..." -ForegroundColor Yellow
+
+$verifyFile = "$ScriptDir\verify_install.py"
+Clear-Content $verifyFile -Force -ErrorAction SilentlyContinue
+
+# Using a modern, bulletproof metadata approach that won't break on library internal API changes
+Add-Content $verifyFile "import importlib.metadata"
+Add-Content $verifyFile "packages = ['flask', 'flask-cors', 'yt-dlp', 'mutagen', 'pillow', 'requests']"
+Add-Content $verifyFile "for pkg in packages:"
+Add-Content $verifyFile "    try:"
+Add-Content $verifyFile "        ver = importlib.metadata.version(pkg)"
+Add-Content $verifyFile "        print(f'  {pkg.capitalize()}: {ver}')"
+Add-Content $verifyFile "    except importlib.metadata.PackageNotFoundError:"
+Add-Content $verifyFile "        print(f'  {pkg.capitalize()}: FAILED TO IMPORT')"
+Add-Content $verifyFile "        exit(1)"
+
+# Execute script with warnings silenced
+$output = & $VenvPython -W ignore $verifyFile 2>&1
+Remove-Item $verifyFile -Force -ErrorAction SilentlyContinue
+
+# If any package is missing, the Python script exits with code 1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host $output -ForegroundColor Gray
+    Write-Host "All dependencies installed successfully!" -ForegroundColor Green
+} else {
+    Write-Host $output -ForegroundColor Red
+    Write-Host "Some packages failed to verify" -ForegroundColor Red
+    Write-Host "Try manually: pip install -r requirements.txt"
+}
+
+
+# ---- Create directories ----
+
+Write-Host ""
+Write-Host "Creating data directories..." -ForegroundColor Yellow
+New-Item -ItemType Directory -Force -Path "music_downloads/.thumbnails" | Out-Null
 New-Item -ItemType Directory -Force -Path "playlists" | Out-Null
+Write-Host "Directories created" -ForegroundColor Green
 
-# Create a simple batch launcher
-@"
-@echo off
-REM DriveSync Launcher for Windows
-cd /d "%~dp0"
-if not exist "venv" (
-    echo Virtual environment not found. Run install.ps1 first.
-    pause
-    exit /b 1
-)
-call venv\Scripts\activate
-echo 🎵 Starting DriveSync...
-python backend\drivesync.py %*
-if errorlevel 1 (
-    echo.
-    echo Press any key to exit...
-    pause
-)
-"@ | Out-File -FilePath "run.bat" -Encoding ASCII
+# ---- Create batch launcher ----
+
+Write-Host ""
+Write-Host "Creating launcher (run.bat)..." -ForegroundColor Yellow
+
+Clear-Content "run.bat" -Force -ErrorAction SilentlyContinue
+Add-Content "run.bat" "@echo off"
+Add-Content "run.bat" 'cd /d "%~dp0"'
+Add-Content "run.bat" 'if not exist "venv\Scripts\python.exe" ('
+Add-Content "run.bat" "    echo Virtual environment not found. Run install.ps1 first."
+Add-Content "run.bat" "    pause"
+Add-Content "run.bat" "    exit /b 1"
+Add-Content "run.bat" ")"
+Add-Content "run.bat" "echo Starting DriveSync..."
+Add-Content "run.bat" 'call venv\Scripts\activate'
+Add-Content "run.bat" "python backend\main.py %*"
+Add-Content "run.bat" "if errorlevel 1 ("
+Add-Content "run.bat" "    echo."
+Add-Content "run.bat" "    echo Press any key to exit..."
+Add-Content "run.bat" "    pause"
+Add-Content "run.bat" ")"
+
+Write-Host "Created run.bat" -ForegroundColor Green
+
+# ---- Done ----
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "✅ DriveSync installation complete!" -ForegroundColor Green
+Write-Host "DriveSync installation complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
+
 Write-Host "To start the server:" -ForegroundColor White
-Write-Host "  run.bat" -ForegroundColor Cyan
+Write-Host "  .\run.bat" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Or manually:" -ForegroundColor White
 Write-Host "  venv\Scripts\activate" -ForegroundColor Gray
-Write-Host "  python backend\drivesync.py" -ForegroundColor Gray
+Write-Host "  python backend\main.py" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Then open http://localhost:5000 in your browser" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Your LAN IP:" -ForegroundColor White
+$ip = ipconfig | Select-String -Pattern "IPv4.*: (\d+\.\d+\.\d+\.\d+)"
+if ($ip) {
+    $ip.Matches.Groups.Value
+} else {
+    Write-Host "(could not detect automatically)" -ForegroundColor Gray
+}
+Write-Host ""
+Write-Host "Then open http://[YOUR_IP]:5000 from other devices" -ForegroundColor Cyan
