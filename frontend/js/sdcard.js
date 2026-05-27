@@ -69,12 +69,16 @@ async function loadExportData() {
 
 function updateSubfolderHint() {
     const drive = document.getElementById('sdDriveSelect').value;
+    const folderCheck = document.getElementById('driveFolderCheck');
     const hint = document.getElementById('subfolderHint');
     if (drive) {
+        folderCheck.innerHTML = `Checking Folder: ${drive}${document.getElementById('subfolderInput').value ? document.getElementById('subfolderInput').value + '\\' : ''}`;
         hint.textContent = `Playlists will be saved to: ${drive}${document.getElementById('subfolderInput').value ? document.getElementById('subfolderInput').value + '\\' : ''}[Playlist Name]`;
     } else {
+        folderCheck.innerHTML = "Checking Root Folder";
         hint.textContent = 'Select a drive above';
     }
+	refreshDriveFolders();
 }
 
 async function refreshDriveFolders() {
@@ -111,13 +115,18 @@ async function refreshDriveFolders() {
                             <div class="folder-meta">${f.song_count} songs · ${sizeMb} MB</div>
                         </div>
                     </div>
-                    <button class="btn btn-danger btn-sm" onclick="deleteDriveFolder('${escHtml(f.path).replace(/'/g, "\\'")}')">🗑️</button>
+                    <button class="btn btn-danger btn-sm" data-path="${escHtml(f.path)}" onclick="handleDeleteClick(this)">🗑️</button>
                 </div>`;
             }).join('') +
         '</div>';
     } catch(e) {
         container.innerHTML = '<p class="text-muted">Error loading folders.</p>';
     }
+}
+
+async function handleDeleteClick(buttonElement) {
+    const folderPath = buttonElement.getAttribute('data-path');
+    await deleteDriveFolder(folderPath);
 }
 
 async function deleteDriveFolder(folderPath) {
@@ -129,7 +138,11 @@ async function deleteDriveFolder(folderPath) {
             body: JSON.stringify({ folder_path: folderPath })
         });
         const data = await res.json();
-        if (data.success) refreshDriveFolders();
+        if (data.success) {
+            refreshDriveFolders();
+        } else {
+            alert('Backend failed to delete the folder. Check path permissions.');
+        }
     } catch(e) {
         alert('Error deleting folder');
     }
