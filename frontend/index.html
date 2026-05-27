@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriveSync</title>
+    <link rel="stylesheet" href="css/drivesync.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <span class="logo-icon">🎵</span>
+                <div><h1>DriveSync <small>Music Manager</small></h1></div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline btn-sm" onclick="checkSdCards()">💾 Scan</button>
+                <span id="sdStatus" style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;"></span>
+            </div>
+        </header>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('library')">📚 Library</button>
+            <button class="tab-btn" onclick="switchTab('download')">⬇️ Download</button>
+            <button class="tab-btn" onclick="switchTab('import')">📤 Import</button>
+            <button class="tab-btn" onclick="switchTab('playlists')">📋 Playlists</button>
+            <button class="tab-btn" onclick="switchTab('export')">💾 SD</button>
+        </div>
+
+        <!-- LIBRARY -->
+        <div id="tab-library" class="tab-content active">
+            <div class="card">
+                <div class="flex-between">
+                    <h2>📚 Music Library</h2>
+                    <div class="search-bar" style="max-width:280px;width:100%;">
+                        <input type="search" id="librarySearch" placeholder="Search..." oninput="loadLibrary()">
+                    </div>
+                </div>
+                <div id="librarySongs"><div class="empty-state"><div class="icon">🎶</div><p>Loading library...</p></div></div>
+            </div>
+        </div>
+
+        <!-- DOWNLOAD -->
+        <div id="tab-download" class="tab-content">
+            <div class="card">
+                <h2>⬇️ Download from YouTube</h2>
+                <p class="text-muted" style="margin-bottom:8px;">Supports individual videos and playlists. URLs are automatically cleaned of tracking parameters.</p>
+                <div class="form-group">
+                    <label>YouTube URL</label>
+                    <input type="url" id="downloadUrl" placeholder="https://www.youtube.com/watch?v=... or playlist URL">
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="startDownload()">⬇️ Download</button>
+                    <button class="btn btn-warning" id="cancelDownloadBtn" style="display:none;" onclick="cancelDownload()">✕ Cancel</button>
+                </div>
+                <div id="downloadStatus" class="status mt-10"></div>
+                <div id="progressContainer" style="display:none;" class="mt-10">
+                    <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+                    <div id="progressText" class="progress-text">Starting...</div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>📋 Batch Download</h3>
+                <div class="form-group">
+                    <label>Paste multiple YouTube URLs (one per line)</label>
+                    <textarea id="batchUrls" rows="4" placeholder="https://youtube.com/watch?v=...&#10;https://youtube.com/watch?v=..."></textarea>
+                </div>
+                <button class="btn btn-accent btn-block" onclick="startBatchDownload()">⬇️ Download All</button>
+            </div>
+        </div>
+
+        <!-- IMPORT -->
+        <div id="tab-import" class="tab-content">
+            <div class="card">
+                <h2>📤 Import Music Files</h2>
+                <p class="text-muted" style="margin-bottom:12px;">
+                    Supported: MP3, M4A, WAV, FLAC, OGG, AAC, WMA<br>
+                    Non-MP3 files auto-convert (requires ffmpeg).
+                </p>
+                <div class="form-group">
+                    <label>Select files to import</label>
+                    <input type="file" id="importFiles" multiple accept=".mp3,.m4a,.wav,.flac,.ogg,.aac,.wma">
+                </div>
+                <button class="btn btn-primary btn-block" onclick="startImport()">📤 Import</button>
+                <div id="importStatus" class="status mt-10"></div>
+            </div>
+        </div>
+
+        <!-- PLAYLISTS -->
+        <div id="tab-playlists" class="tab-content">
+            <div class="card" id="playlistsView">
+                <div class="flex-between">
+                    <h2>📋 Playlists</h2>
+                    <button class="btn btn-primary btn-sm" onclick="showCreatePlaylist()">+ New</button>
+                </div>
+                <div id="playlistsList"><div class="empty-state"><p>Loading playlists...</p></div></div>
+            </div>
+            <div class="card" id="playlistDetail" style="display:none;">
+                <div class="playlist-detail-header">
+                    <div>
+                        <button class="btn btn-outline btn-sm" onclick="backToPlaylists()">← Back</button>
+                        <h2 id="playlistDetailName" style="margin-top:8px;"></h2>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <button class="btn btn-accent btn-sm" id="shuffleBtn" onclick="shufflePlaylist()">🔀 Shuffle</button>
+                        <button class="btn btn-outline btn-sm" id="unshuffleBtn" style="display:none;" onclick="unshufflePlaylist()">↩ Unshuffle</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteCurrentPlaylist()">🗑️</button>
+                    </div>
+                </div>
+                <h3>Add Songs</h3>
+                <div class="search-bar" style="max-width:100%;margin-bottom:8px;">
+                    <input type="search" id="playlistSearch" placeholder="Search songs..." oninput="showPlaylistAddSongs()">
+                </div>
+                <div id="playlistAddSongs"></div>
+                <h3 class="mt-16">Playlist Songs</h3>
+                <div id="playlistSongs"></div>
+            </div>
+        </div>
+
+        <!-- EXPORT -->
+        <div id="tab-export" class="tab-content">
+            <div class="card">
+                <h2>💾 Export to Drive / Disk</h2>
+                <p class="text-muted" style="margin-bottom:12px;">Export playlists as folders to any USB drive, SD card, or external disk.</p>
+                <div id="sdCardInfo"><div class="empty-state"><p>Click "Scan" to detect drives.</p></div></div>
+                <div class="form-group">
+                    <label>Select Drive</label>
+                    <select id="sdDriveSelect" onchange="updateSubfolderHint();refreshDriveFolders()"><option value="">-- No drives detected --</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Subfolder (optional) — e.g. "Playlists" or "Music"</label>
+                    <input type="text" id="subfolderInput" placeholder="Leave empty for drive root" oninput="updateSubfolderHint()">
+                    <div id="subfolderHint" class="text-muted mt-10">Select a drive above</div>
+                </div>
+                <div class="form-group">
+                    <label>Select Playlist to Export</label>
+                    <select id="exportPlaylistSelect"><option value="">-- Select a playlist --</option></select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="shufflePrefix" checked>
+                        <span>Add numeric prefix for shuffle order (e.g. "001_Song.mp3")</span>
+                    </label>
+                </div>
+                <button class="btn btn-success btn-block" onclick="exportToSd()">💾 Export</button>
+                <div id="exportStatus" class="status mt-10"></div>
+            </div>
+            <div class="card">
+                <h3>📂 Existing Playlists on Drive</h3>
+                <div id="driveFoldersList"><p class="text-muted">Select a drive to see existing playlists.</p></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mini Player -->
+    <div class="mini-player" id="miniPlayer">
+        <span class="now-playing" id="nowPlayingText">Now Playing</span>
+        <audio id="audioPlayer" controls controlsList="nodownload"></audio>
+        <span class="close-player" onclick="stopAudio()">✕</span>
+    </div>
+
+    <!-- Create Playlist Modal -->
+    <div class="modal-overlay" id="createPlaylistModal">
+        <div class="modal">
+            <h2>New Playlist</h2>
+            <div class="form-group">
+                <label>Playlist Name</label>
+                <input type="text" id="newPlaylistName" placeholder="My Awesome Playlist">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createPlaylist()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Playlist Picker Modal -->
+    <div class="modal-overlay" id="playlistPickerModal">
+        <div class="modal" style="max-width:480px;">
+            <h2>Add to Playlist</h2>
+            <div class="search-bar" style="margin-bottom:12px;">
+                <input type="search" id="playlistPickerSearch" placeholder="Search playlists..." oninput="filterPlaylistPicker()">
+            </div>
+            <div id="playlistPickerList" class="playlist-picker-list"></div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closePlaylistPicker()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/state.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/library.js"></script>
+    <script src="js/download.js"></script>
+    <script src="js/import.js"></script>
+    <script src="js/playlists.js"></script>
+    <script src="js/sdcard.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# DriveSync Dependencies
+# Install with: pip install -r requirements.txt
+
+flask>=3.0.0
+flask-cors>=4.0.0
+yt-dlp>=2023.0.0
+mutagen>=1.46.0
+Pillow>=9.0.0
+requests>=2.27.0
