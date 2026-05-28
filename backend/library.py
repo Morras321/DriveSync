@@ -1,6 +1,7 @@
 """
 DriveSync - Music Library Module
 Scanning MP3 files, reading metadata, and importing audio files.
+Supports multiple music directories (local + external drives).
 """
 
 import shutil
@@ -10,18 +11,39 @@ from pathlib import Path
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC
 
-from config import MUSIC_DIR, THUMBNAIL_DIR, VALID_AUDIO_EXTENSIONS
+from config import MUSIC_DIR, THUMBNAIL_DIR, VALID_AUDIO_EXTENSIONS, get_all_music_dirs
+
+# Cache of which dir a song_id belongs to
+_song_location_cache = {}
+
+
+def _rebuild_cache():
+    """Scan all music dirs and build song_id -> path mapping."""
+    _song_location_cache.clear()
+    for d in get_all_music_dirs():
+        if d.exists():
+            for f in d.glob("*.mp3"):
+                _song_location_cache[f.stem] = f
 
 
 # ── Query ──────────────────────────────────────────────────────────────
 
 def get_all_songs():
-    """Return a list of song-info dicts for every MP3 in the library."""
+    """Return a list of song-info dicts for every MP3 across all music dirs."""
+    _rebuild_cache()
     songs = []
-    for f in sorted(MUSIC_DIR.glob("*.mp3")):
-        info = get_song_info(f)
-        if info:
-            songs.append(info)
+    seen = set()
+    for d in get_all_music_dirs():
+        if not d.exists():
+            continue
+        for f in sorted(d.glob("*.mp3")):
+            resolved = str(f.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            info = get_song_info(f)
+            if info:
+                songs.append(info)
     return songs
 
 
@@ -78,18 +100,16 @@ def get_song_info(filepath):
 
 
 def find_song_by_id(song_id):
-    """Return the Path to the first MP3 matching song_id stem, or None."""
-    for f in MUSIC_DIR.glob("*.mp3"):
-        if f.stem == song_id:
-            return f
-    return None
+    """Return the full Path to the first MP3 matching song_id, or None."""
+    _rebuild_cache()
+    return _song_location_cache.get(song_id)
 
 
 # ── Import ─────────────────────────────────────────────────────────────
 
-def import_file(src_path, delete_original=False):
+def import_file(src_path, delete_original=False, target_dir=None):
     """
-    Copy *src_path* into the music library.
+    Copy *src_path* into the music library (first available dir, or target_dir).
     If the source isn't MP3, attempt conversion via ffmpeg.
     Returns a dict with success / filename / error.
     """
@@ -100,10 +120,11 @@ def import_file(src_path, delete_original=False):
     if src.suffix.lower() not in VALID_AUDIO_EXTENSIONS:
         return {"error": f"Unsupported format: {src.suffix}"}
 
-    dest = MUSIC_DIR / src.name
+    dest_dir = target_dir if target_dir else MUSIC_DIR
+    dest = dest_dir / src.name
     counter = 1
     while dest.exists():
-        dest = MUSIC_DIR / f"{src.stem}_{counter}{src.suffix}"
+        dest = dest_dir / f"{src.stem}_{counter}{src.suffix}"
         counter += 1
 
     shutil.copy2(str(src), str(dest))
@@ -139,9 +160,10 @@ def delete_song(song_id):
     Returns True if something was deleted.
     """
     removed = False
-    for f in MUSIC_DIR.glob(f"{song_id}.*"):
-        f.unlink()
-        removed = True
+    for d in get_all_music_dirs():
+        for f in d.glob(f"{song_id}.*"):
+            f.unlink()
+            removed = True
 
     thumb = THUMBNAIL_DIR / f"{song_id}.jpg"
     if thumb.exists():

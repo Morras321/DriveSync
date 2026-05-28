@@ -23,7 +23,9 @@ from playlist import (
     unshuffle_playlist,
     reorder_playlist,
 )
-from sdcard import get_drive_info, export_playlist, list_playlist_folders, delete_playlist_folder
+from sdcard import (get_drive_info, export_playlist, list_playlist_folders,
+                    delete_playlist_folder, list_folder_songs, add_song_to_folder)
+from config import get_storage_info
 
 api = Blueprint("api", __name__)
 
@@ -236,6 +238,12 @@ def reorder_route(playlist_id):
 #  SD Card
 # ═══════════════════════════════════════════════════════════════════════
 
+@api.route("/api/storage")
+def storage_info():
+    """Return disk usage info for all music directories."""
+    return jsonify(get_storage_info())
+
+
 @api.route("/api/sdcard")
 def sdcard_info():
     return jsonify(get_drive_info())
@@ -266,6 +274,29 @@ def sdcard_list_folders():
         return jsonify({"error": "Drive path required"}), 400
     folders = list_playlist_folders(drive_path, subfolder)
     return jsonify(folders)
+
+
+@api.route("/api/sdcard/folders/songs", methods=["POST"])
+def sdcard_folder_songs():
+    """List all songs in a specific folder on the drive."""
+    data = request.json or {}
+    folder_path = data.get("folder_path")
+    if not folder_path:
+        return jsonify({"error": "Folder path required"}), 400
+    songs = list_folder_songs(folder_path)
+    return jsonify(songs)
+
+
+@api.route("/api/sdcard/folders/add-song", methods=["POST"])
+def sdcard_folder_add_song():
+    """Add a song to a folder on the drive (by song_id or file path)."""
+    data = request.json or {}
+    folder_path = data.get("folder_path")
+    song_source = data.get("song_source")
+    if not folder_path or not song_source:
+        return jsonify({"error": "folder_path and song_source required"}), 400
+    result = add_song_to_folder(folder_path, song_source)
+    return jsonify(result)
 
 
 @api.route("/api/sdcard/folders/delete", methods=["POST"])

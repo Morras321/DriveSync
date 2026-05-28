@@ -12,4 +12,5 @@ const DS = {
 document.addEventListener('DOMContentLoaded', () => {
     loadLibrary();
     checkSdCards();
+    loadStorageInfo();
 });

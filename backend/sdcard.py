@@ -1,7 +1,7 @@
 """
 DriveSync - Drive/Disk Export Module
-Cross-platform detection of removable drives and playlist export.
-Supports custom sub-folders and management of existing playlist folders.
+Cross-platform detection of removable drives, playlist folder management,
+and folder song listing/editing.
 """
 
 import os
@@ -19,8 +19,7 @@ from playlist import get_playlist
 def find_removable_drives():
     """
     Return a list of drive mount-points (e.g. ``D:\\`` or ``/media/pi/SD_CARD``).
-    On Linux uses ``lsblk`` (preferred) with ``df`` fallback, also scans common
-    mount directories.
+    Uses ``lsblk`` on Linux with a pragmatic fallback chain.
     """
     if IS_WINDOWS:
         return _windows_drives()
@@ -28,185 +27,121 @@ def find_removable_drives():
 
 
 def _windows_drives():
-    """Detect removable drives via GetDriveTypeW."""
+    """Detect all non-system drives (not just removable) since USB HDDs may
+    report as DRIVE_FIXED. We include any drive that isn't C:."""
     import string
     drives = []
     for letter in string.ascii_uppercase:
         drive = f"{letter}:\\"
         if os.path.exists(drive) and drive.upper() != "C:\\":
-            try:
-                import ctypes
-                dtype = ctypes.windll.kernel32.GetDriveTypeW(drive)  # 2 = DRIVE_REMOVABLE
-                if dtype == 2:
-                    drives.append(drive)
-            except Exception:
-                drives.append(drive)
+            drives.append(drive)
     return drives
 
 
-def _get_all_mounts_via_lsblk():
+# ── Linux detection ────────────────────────────────────────────────────
+
+def _get_lsblk_json():
     """
-    Use ``lsblk`` to list all mounted filesystems.
-    Returns a list of mount-point paths.
+    Use ``lsblk --json`` to get structured data about all block devices.
+    Returns a list of dicts with keys: name, mountpoint, fstype, type, label.
     """
+    try:
+        result = subprocess.run(
+            ["lsblk", "--json", "-o", "NAME,MOUNTPOINT,FSTYPE,TYPE,LABEL"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+
+        import json as json_mod
+        data = json_mod.loads(result.stdout)
+        devices = data.get("blockdevices", [])
+
+        # Flatten children into the list
+        def _flatten(items):
+            out = []
+            for item in items:
+                children = item.pop("children", None)
+                out.append(item)
+                if children:
+                    out.extend(_flatten(children))
+            return out
+
+        return _flatten(devices)
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        print(f"lsblk --json failed: {exc}")
+        return []
+
+
+def _get_mounts_via_lsblk_text():
+    """Fallback: lsblk without --json (some older systems)."""
     try:
         result = subprocess.run(
             ["lsblk", "-o", "MOUNTPOINT", "-l", "-n"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
-            mounts = []
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line and line != "" and os.path.exists(line):
-                    mounts.append(line)
-            return mounts
-    except FileNotFoundError:
-        pass  # lsblk not installed
-    except Exception as exc:
-        print(f"lsblk failed: {exc}")
-    return []
-
-
-def _get_all_mounts_via_findmnt():
-    """
-    Fallback: use ``findmnt`` (more widely available).
-    """
-    try:
-        result = subprocess.run(
-            ["findmnt", "-o", "TARGET", "-l", "-n"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            mounts = []
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line and line != "" and os.path.exists(line):
-                    mounts.append(line)
-            return mounts
+            return [line.strip() for line in result.stdout.splitlines()
+                    if line.strip() and os.path.exists(line.strip())]
     except Exception:
         pass
     return []
 
 
-def _get_all_mounts_via_df():
+def _linux_drives():
     """
-    Last-resort fallback: parse ``df -h`` output.
-    Filters to only real filesystems (skips tmpfs, devtmpfs, etc.).
-    """
-    try:
-        result = subprocess.run(
-            ["df", "-h", "-t", "ext4", "-t", "ext3", "-t", "ext2",
-             "-t", "vfat", "-t", "exfat", "-t", "ntfs", "-t", "fuseblk",
-             "-t", "btrfs", "-t", "xfs"],
-            capture_output=True, text=True, timeout=5,
-        )
-        mounts = []
-        for line in result.stdout.splitlines()[1:]:  # skip header
-            parts = line.split()
-            if len(parts) >= 6:
-                mount = parts[5]
-                if mount and os.path.exists(mount):
-                    mounts.append(mount)
-        return mounts
-    except Exception:
-        return []
+    Strategy:
+    1. Try lsblk --json for structured data (best).
+    2. Fall back to plain lsblk text output.
+    3. Always scan /media, /mnt, /run/media regardless.
 
+    Return list of mount-point strings that are *not* system paths.
+    """
+    candidates = set()
+    system_block = {"/", "/boot", "/boot/firmware", "/efi", "/proc",
+                     "/sys", "/dev", "/run", "/tmp"}
 
-def _get_common_mount_dirs():
-    """
-    Scan well-known directories where removable drives are mounted.
-    Includes auto-detection of the current user's name.
-    """
+    # ── Method 1: lsblk --json (most reliable) ──
+    for dev in _get_lsblk_json():
+        mp = dev.get("mountpoint")
+        dtype = dev.get("type", "")       # "part", "disk", "rom", "loop"
+        fstype = dev.get("fstype", "") or ""
+
+        if mp and mp.strip() and mp not in system_block:
+            mp = mp.strip()
+            # Skip loop devices and CDs
+            if dtype == "loop" or dtype == "rom":
+                continue
+            # Skip paths we know are system
+            if any(mp == s or mp.startswith(s + "/") for s in ["/boot", "/proc", "/sys"]):
+                continue
+            candidates.add(mp)
+
+    # ── Method 2: plain lsblk ──
+    if not candidates:
+        for mp in _get_mounts_via_lsblk_text():
+            if mp not in system_block:
+                candidates.add(mp)
+
+    # ── Method 3: scan common directories ──
     user = os.environ.get("USER") or os.environ.get("USERNAME") or "pi"
-    scan_dirs = [
-        Path(f"/media/{user}"),
-        Path("/media"),
-        Path("/mnt"),
-        Path(f"/run/media/{user}"),
-        Path("/run/media"),
-    ]
-
-    found = set()
-    for base in scan_dirs:
+    for base in [Path(f"/media/{user}"), Path("/media"), Path("/mnt"),
+                 Path(f"/run/media/{user}"), Path("/run/media")]:
         if base.exists():
             try:
                 for item in base.iterdir():
                     if item.is_dir():
-                        found.add(str(item.resolve()))
+                        candidates.add(str(item.resolve()))
             except PermissionError:
                 pass
-    return list(found)
+
+    result = sorted(c for c in candidates if c.strip())
+    return result
 
 
-def _is_removable(path_str):
-    """
-    Heuristic: a mount point is probably a removable drive if it lives
-    under ``/media``, ``/mnt``, ``/run/media``, or is NOT the root ``/``,
-    NOT a system path like ``/boot``, ``/boot/firmware``, ``/proc``, etc.
-    """
-    SYSTEM_PATHS = {"/", "/boot", "/boot/firmware", "/efi", "/proc",
-                    "/sys", "/dev", "/run", "/tmp"}
-
-    path = path_str.strip()
-    if not path or path in SYSTEM_PATHS:
-        return False
-
-    name = Path(path).name
-    if name.startswith(".") or name.startswith("loop"):
-        return False
-
-    # Definite indicators of a removable drive
-    if path.startswith("/media/") or path.startswith("/mnt/") or path.startswith("/run/media/"):
-        return True
-
-    # System paths that should not be treated as removable
-    for sys_path in SYSTEM_PATHS:
-        if path == sys_path:
-            return False
-
-    # If the path has a typical removable-storage structure (single subfolder
-    # under /media), treat it as removable
-    if path.count("/") >= 3:
-        parent = Path(path).parent
-        if parent.name in ("media", "mnt") or "media" in path.parents:
-            return True
-
-    return False
-
-
-def _linux_drives():
-    """
-    Combine multiple detection methods to find all removable drives.
-    Returns a deduplicated list of mount-point strings.
-    """
-    candidates = set()
-
-    # Method 1: lsblk (most reliable on Raspberry Pi)
-    for m in _get_all_mounts_via_lsblk():
-        candidates.add(m)
-
-    # Method 2: findmnt fallback
-    if not candidates:
-        for m in _get_all_mounts_via_findmnt():
-            candidates.add(m)
-
-    # Method 3: df fallback
-    if not candidates:
-        for m in _get_all_mounts_via_df():
-            candidates.add(m)
-
-    # Method 4: Always scan common mount directories
-    for m in _get_common_mount_dirs():
-        candidates.add(m)
-
-    # Filter to removable-looking mounts
-    drives = [m for m in candidates if _is_removable(m)]
-
-    # Sort alphabetically for consistency
-    drives.sort()
-    return drives
-
+# ── Info ───────────────────────────────────────────────────────────────
 
 def get_drive_info():
     """Return a list of dicts with capacity info for each removable drive."""
@@ -231,17 +166,16 @@ def get_drive_info():
     return info
 
 
-# ── List existing playlist folders on a drive ──────────────────────────
+# ── Folder management ─────────────────────────────────────────────────
 
 def list_playlist_folders(drive_path, subfolder=""):
     """
-    List folders on the given drive that look like they were created by DriveSync
-    (i.e. contain MP3 files). Returns a list of {name, path, song_count, size}.
+    List folders on the given drive that contain MP3 files.
+    Returns [{name, path, song_count, size}].
     """
     base = Path(drive_path)
     if subfolder:
         base = base / subfolder
-
     if not base.exists():
         return []
 
@@ -259,6 +193,84 @@ def list_playlist_folders(drive_path, subfolder=""):
     return folders
 
 
+def list_folder_songs(drive_path):
+    """
+    List all MP3 files inside a given folder (the folder itself, not recursive).
+    Returns [{filename, path, size, title, artist}] with metadata.
+    """
+    folder = Path(drive_path)
+    if not folder.exists() or not folder.is_dir():
+        return []
+
+    songs = []
+    for f in sorted(folder.glob("*.mp3")):
+        title, artist = _guess_metadata(f)
+        songs.append({
+            "filename": f.name,
+            "path": str(f),
+            "size": f.stat().st_size,
+            "title": title,
+            "artist": artist,
+        })
+    return songs
+
+
+def _guess_metadata(mp3_path):
+    """Try to read ID3 title/artist, fall back to filename heuristics."""
+    try:
+        from mutagen.mp3 import MP3 as MutagenMP3
+        audio = MutagenMP3(mp3_path)
+        tags = audio.tags
+        title = str(tags.get("TIT2", "")) if tags else ""
+        artist = str(tags.get("TPE1", "")) if tags else ""
+        if title:
+            return title, artist
+    except Exception:
+        pass
+
+    # Fallback: parse filename  "Artist - Title.mp3" or just "Title.mp3"
+    name = mp3_path.stem
+    if " - " in name:
+        parts = name.split(" - ", 1)
+        return parts[1], parts[0]
+    return name, "Unknown"
+
+
+def add_song_to_folder(folder_path, song_source):
+    """
+    Copy a song into the given folder. song_source can be:
+      - a path in the local library (by song id)
+      - a full file path
+    Returns {success, filename, error}.
+    """
+    folder = Path(folder_path)
+    if not folder.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+
+    # Try to find the source
+    src = Path(song_source)
+    if not src.exists():
+        # Maybe it's a song_id in our library
+        from library import find_song_by_id
+        found = find_song_by_id(song_source)
+        if found:
+            src = found
+        else:
+            return {"success": False, "error": f"Source not found: {song_source}"}
+
+    dest = folder / src.name
+    counter = 1
+    while dest.exists():
+        dest = folder / f"{src.stem}_{counter}{src.suffix}"
+        counter += 1
+
+    try:
+        shutil.copy2(str(src), str(dest))
+        return {"success": True, "filename": dest.name}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
 def delete_playlist_folder(folder_path):
     """Delete a folder and its contents from the drive."""
     path = Path(folder_path)
@@ -271,10 +283,7 @@ def delete_playlist_folder(folder_path):
 # ── Export ─────────────────────────────────────────────────────────────
 
 def export_playlist(playlist_id, drive_path, subfolder="", shuffle_prefix=False):
-    """
-    Create a folder named after the playlist on the given drive/subfolder
-    and copy all songs into it. Optionally adds a ``001_``, ``002_`` … prefix.
-    """
+    """Export a playlist as a folder to a drive."""
     playlist = get_playlist(playlist_id)
     if not playlist:
         return {"error": "Playlist not found"}
@@ -283,17 +292,13 @@ def export_playlist(playlist_id, drive_path, subfolder="", shuffle_prefix=False)
     if drive_path not in drives and not any(drive_path.startswith(d) for d in drives):
         return {"error": f"Drive not found at {drive_path}"}
 
-    # Build destination path
     name = re.sub(r'[<>:"/\\|?*\s]', "_", playlist["name"])
     dest = Path(drive_path)
     if subfolder:
         dest = dest / subfolder
     dest = dest / name
 
-    # Ensure parent exists
     dest.parent.mkdir(parents=True, exist_ok=True)
-
-    # Clean existing folder
     if dest.exists():
         shutil.rmtree(str(dest))
     dest.mkdir(parents=True, exist_ok=True)
