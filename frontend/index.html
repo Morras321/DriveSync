@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DriveSync</title>
-    <link rel="stylesheet" href="css/drivesync.css">
+    <link id="style" rel="stylesheet" href="css/drivesync.css">
 </head>
 <body>
     <div class="app">
@@ -14,6 +14,7 @@
                 <span class="logo-icon">🎵</span>
                 <div><h1>DriveSync <small>Music Manager</small></h1></div>
             </div>
+            <button class="btn btn-outline btn-sm" onclick="switchStyles()">Switch Styles</button>
             <div class="header-actions">
                 <button class="btn btn-outline btn-sm" onclick="checkSdCards()">💾 Scan</button>
                 <span id="sdStatus" style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;"></span>

@@ -29,7 +29,7 @@ async function loadLibrary() {
                         <div class="play-overlay ${playing ? 'playing' : ''}">${playing ? '⏸' : '▶️'}</div>
                     </div>
                     <div class="song-info">
-                        <div class="title">${escHtml(s.title)}</div>
+                        <div class="title" title="${escHtml(s.title)}">${escHtml(s.title)}</div>
                         <div class="artist">${escHtml(s.artist)}</div>
                         <div class="meta">${dur} · ${size}</div>
                     </div>

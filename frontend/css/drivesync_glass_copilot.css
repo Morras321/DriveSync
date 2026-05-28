@@ -1,0 +1,149 @@
+/* ===== DriveSync – Glass Apple Style ===== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg: #f0f0f3;
+    --surface: rgba(255,255,255,0.25);
+    --surface2: rgba(255,255,255,0.15);
+    --primary: #007aff; --primary-hover: #339aff;
+    --accent: #34c759;
+    --danger: #ff3b30; --success: #30d158; --warning: #ffcc00;
+    --text: #1c1c1e; --text-muted: rgba(28,28,30,0.6);
+    --radius: 14px; --shadow: 0 8px 24px rgba(0,0,0,0.15);
+    --transition: 0.3s cubic-bezier(0.4,0,0.2,1);
+    --blur: 20px;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #e6e6eb, #fafafc);
+    color: var(--text);
+    min-height: 100vh; overflow-x: hidden;
+}
+
+/* ── Layout ─────────────────────────────── */
+.app { max-width: 1400px; margin: 0 auto; padding: 16px; width: 100%; }
+
+header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,0.2);
+    margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    backdrop-filter: blur(var(--blur));
+}
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-icon { font-size: 28px; flex-shrink: 0; }
+.logo h1 {
+    font-size: 24px;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.logo small { display: block; font-size: 11px; color: var(--text-muted); }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ── Tabs ───────────────────────────────── */
+.tabs {
+    display: flex; gap: 6px; background: var(--surface2);
+    border-radius: var(--radius); padding: 6px; margin-bottom: 20px;
+    backdrop-filter: blur(var(--blur));
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab-btn {
+    padding: 8px 14px; border: none; background: transparent;
+    color: var(--text-muted); font-size: 13px; font-weight: 600;
+    cursor: pointer; border-radius: 10px; transition: var(--transition);
+}
+.tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.2); }
+.tab-btn.active { color: #fff; background: var(--primary); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Cards ─────────────────────────────── */
+.card {
+    background: var(--surface); backdrop-filter: blur(var(--blur));
+    border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow);
+    margin-bottom: 16px; animation: fadeInUp 0.4s ease both;
+}
+.card h2 { font-size: 17px; margin-bottom: 12px; color: var(--accent); }
+.card h3 { font-size: 14px; margin: 12px 0 8px; color: var(--text); }
+
+/* ── Forms ─────────────────────────────── */
+.form-group { margin-bottom: 12px; }
+.form-group label {
+    display: block; margin-bottom: 5px;
+    font-size: 12px; color: var(--text-muted); font-weight: 600;
+}
+input[type="text"],input[type="url"],input[type="search"],
+input[type="file"],select,textarea {
+    width: 100%; padding: 11px 14px; background: rgba(255,255,255,0.2);
+    border: 2px solid var(--surface2); border-radius: 8px;
+    color: var(--text); font-size: 14px; transition: var(--transition);
+    backdrop-filter: blur(var(--blur));
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--primary); }
+
+/* ── Buttons ────────────────────────────── */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 10px 18px; border: none; border-radius: 10px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: transform var(--transition), background var(--transition);
+}
+.btn:hover { transform: scale(1.05); }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-accent { background: var(--accent); color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-success { background: var(--success); color: #fff; }
+.btn-warning { background: var(--warning); color: #000; }
+.btn-outline { background: transparent; border: 2px solid rgba(255,255,255,0.3); color: var(--text); }
+
+/* ── Song Grid / Cards ───────────────────── */
+.song-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+.song-card {
+    background: var(--surface); backdrop-filter: blur(var(--blur));
+    border-radius: 10px; padding: 12px; display: flex; align-items: center; gap: 12px;
+    transition: var(--transition); border: 2px solid transparent; position: relative;
+    animation: fadeInUp 0.4s ease both;
+}
+.song-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+.song-card.playing { border-color: var(--accent); background: rgba(52,199,89,.15); }
+
+/* ── Playlist Grid / Cards ───────────────── */
+.playlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.playlist-card {
+    background: var(--surface); backdrop-filter: blur(var(--blur));
+    border-radius: 10px; padding: 16px; cursor: pointer; transition: var(--transition);
+    border: 2px solid transparent; text-align: center; animation: fadeInUp 0.4s ease both;
+}
+.playlist-card:hover { border-color: var(--primary); transform: translateY(-2px); }
+
+/* ── Drive Folder List ───────────────────── */
+.drive-folder-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.drive-folder-card {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); backdrop-filter: blur(var(--blur));
+    border-radius: 8px; padding: 12px 14px; border: 1px solid var(--surface2);
+    animation: fadeInUp 0.4s ease both;
+}
+.folder-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.folder-icon { font-size: 22px; flex-shrink: 0; }
+.folder-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-meta { font-size: 11px; color: var(--text-muted); }
+
+/* ── Animations ─────────────────────────── */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
+}
+.btn-primary:active { animation: pulse 0.3s ease; }
+
+/* ── Mini Player ────────────────────────── */
+.mini-player {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--surface); backdrop-filter: blur(var(--blur));
+    border-top: 1px solid rgba(255,255,255,0.3);
+}

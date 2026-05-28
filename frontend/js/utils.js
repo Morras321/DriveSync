@@ -43,3 +43,7 @@ function formatSize(bytes) {
     if (!bytes) return '';
     return (bytes / 1024 / 1024).toFixed(1) + ' MB';
 }
+
+function switchStyles() {
+	document.getElementById('style').href = 'css/drivesync_glass2.css';
+}
