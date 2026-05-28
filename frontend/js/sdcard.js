@@ -26,6 +26,9 @@ async function checkSdCards() {
         refreshDriveFolders();
     } catch(e) {
         statusEl.textContent = '❌ Error';
+        // On Linux, show helpful message about mount permissions
+        const container = document.getElementById('sdCardInfo');
+        container.innerHTML = '<div class="empty-state"><p>⚠️ Could not scan drives. On Linux make sure your user has permission to access <code>/media</code> and <code>/mnt</code>.<br><br>Try: <code>sudo usermod -aG plugdev $USER</code> then reboot.</p></div>';
     }
 }
 
