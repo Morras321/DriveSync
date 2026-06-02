@@ -90,12 +90,68 @@ def _get_mounts_via_lsblk_text():
     return []
 
 
+def _probe_autofs_mounts():
+    """
+    Scan known autofs parent directories and try to trigger mounts
+    by accessing each subdirectory. Returns paths that are confirmed
+    mount points or contain real files (not empty autofs stubs).
+    """
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "pi"
+    autofs_bases = [
+        Path(f"/media/{user}"),
+        Path("/media"),
+        Path("/mnt"),
+        Path(f"/run/media/{user}"),
+        Path("/run/media"),
+    ]
+
+    system_block = {"/", "/boot", "/boot/firmware", "/efi", "/proc",
+                    "/sys", "/dev", "/run", "/tmp"}
+
+    found = set()
+
+    for base in autofs_bases:
+        if not base.exists():
+            continue
+        try:
+            for item in base.iterdir():
+                if not item.is_dir():
+                    continue
+                resolved = str(item.resolve())
+
+                # Skip system paths
+                if resolved in system_block:
+                    continue
+                if any(resolved.startswith(s + "/") for s in ["/boot", "/proc", "/sys"]):
+                    continue
+
+                # Try to access the directory to trigger autofs mount
+                try:
+                    # List contents to trigger automount
+                    contents = list(item.iterdir())
+                except PermissionError:
+                    # Can't access, skip
+                    continue
+                except OSError:
+                    # Some other error, skip
+                    continue
+
+                # After trigger, check if it's a real mount or has content
+                if os.path.ismount(resolved) or len(contents) > 0:
+                    found.add(resolved)
+        except PermissionError:
+            continue
+
+    return found
+
+
 def _linux_drives():
     """
     Strategy:
     1. Try lsblk --json for structured data (best).
     2. Fall back to plain lsblk text output.
     3. Always scan /media, /mnt, /run/media regardless.
+    4. Probe autofs mount points by accessing them to trigger mounts.
 
     Return list of mount-point strings that are *not* system paths.
     """
@@ -125,17 +181,10 @@ def _linux_drives():
             if mp not in system_block:
                 candidates.add(mp)
 
-    # ── Method 3: scan common directories ──
-    user = os.environ.get("USER") or os.environ.get("USERNAME") or "pi"
-    for base in [Path(f"/media/{user}"), Path("/media"), Path("/mnt"),
-                 Path(f"/run/media/{user}"), Path("/run/media")]:
-        if base.exists():
-            try:
-                for item in base.iterdir():
-                    if item.is_dir():
-                        candidates.add(str(item.resolve()))
-            except PermissionError:
-                pass
+    # ── Method 3: scan common directories & trigger autofs mounts ──
+    # This also handles autofs: accessing the directory triggers the automounter.
+    autofs_mounts = _probe_autofs_mounts()
+    candidates.update(autofs_mounts)
 
     result = sorted(c for c in candidates if c.strip())
     return result
