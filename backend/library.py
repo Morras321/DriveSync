@@ -4,12 +4,13 @@ Scanning MP3 files, reading metadata, and importing audio files.
 Supports multiple music directories (local + external drives).
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from mutagen.mp3 import MP3
-from mutagen.id3 import ID3, APIC
+from mutagen.id3 import ID3, APIC, TIT2, TPE1
 
 from config import MUSIC_DIR, THUMBNAIL_DIR, VALID_AUDIO_EXTENSIONS, get_all_music_dirs
 
@@ -107,11 +108,25 @@ def find_song_by_id(song_id):
 
 # ── Import ─────────────────────────────────────────────────────────────
 
-def import_file(src_path, delete_original=False, target_dir=None):
+def _check_duplicate(filename):
+    """Check if a file with the given name already exists in any music dir. Returns the existing path or None."""
+    for d in get_all_music_dirs():
+        if not d.exists():
+            continue
+        candidate = d / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def import_file(src_path, delete_original=False, target_dir=None, custom_title=None, custom_artist=None, custom_thumbnail=None):
     """
     Copy *src_path* into the music library (first available dir, or target_dir).
     If the source isn't MP3, attempt conversion via ffmpeg.
     Returns a dict with success / filename / error.
+    If custom_title is provided, renames the file and updates ID3 title tag.
+    If custom_artist is provided, sets the ID3 artist tag.
+    If custom_thumbnail is provided (binary data), embeds it as album art.
     """
     src = Path(src_path)
     if not src.exists():
@@ -120,12 +135,20 @@ def import_file(src_path, delete_original=False, target_dir=None):
     if src.suffix.lower() not in VALID_AUDIO_EXTENSIONS:
         return {"error": f"Unsupported format: {src.suffix}"}
 
+    # Determine final filename (use custom_title if given)
+    if custom_title:
+        safe_title = re.sub(r'[<>:"/\\|?*]', "_", custom_title)[:100]
+        dest_name = f"{safe_title}.mp3"
+    else:
+        dest_name = src.stem[:100] + src.suffix
+
+    # Check for duplicate
+    existing = _check_duplicate(dest_name)
+    if existing:
+        return {"error": f"Already imported: {existing.name}", "filename": existing.name}
+
     dest_dir = target_dir if target_dir else MUSIC_DIR
-    dest = dest_dir / src.name
-    counter = 1
-    while dest.exists():
-        dest = dest_dir / f"{src.stem}_{counter}{src.suffix}"
-        counter += 1
+    dest = dest_dir / dest_name
 
     shutil.copy2(str(src), str(dest))
 
@@ -144,6 +167,38 @@ def import_file(src_path, delete_original=False, target_dir=None):
                 dest = mp3_dest
         except Exception:
             pass
+
+    # Apply custom ID3 metadata if provided
+    if custom_title or custom_artist or custom_thumbnail:
+        try:
+            audio = MP3(dest)
+            if audio.tags is None:
+                audio.add_tags()
+            if custom_title:
+                audio.tags.add(TIT2(encoding=3, text=custom_title))
+            if custom_artist:
+                # Remove existing TPE1 tags first
+                for key in list(audio.tags.keys()):
+                    if key.startswith("TPE1"):
+                        del audio.tags[key]
+                audio.tags.add(TPE1(encoding=3, text=custom_artist))
+            if custom_thumbnail:
+                # Remove existing APIC tags
+                for key in list(audio.tags.keys()):
+                    if key.startswith("APIC:"):
+                        del audio.tags[key]
+                audio.tags.add(
+                    APIC(encoding=3, mime="image/jpeg",
+                         type=3, desc="Cover",
+                         data=custom_thumbnail)
+                )
+                # Also save thumbnail to thumbnails dir
+                thumb_path = THUMBNAIL_DIR / f"{dest.stem}.jpg"
+                with open(thumb_path, "wb") as tf:
+                    tf.write(custom_thumbnail)
+            audio.save()
+        except Exception as exc:
+            print(f"Custom metadata apply failed: {exc}")
 
     if delete_original:
         src.unlink()

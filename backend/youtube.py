@@ -197,9 +197,136 @@ def enhance_metadata(mp3_path, info_dict):
         print(f"Metadata enhancement failed: {exc}")
 
 
+def _download_single_video(video_url, temp_dir):
+    """
+    Download a single video URL to temp_dir, convert to MP3, and copy to the library.
+    Creates its own YoutubeDL instance per video so output template is correct.
+    Returns dict {success, filename, error} or raises on cancel.
+    """
+    if _download_cancel_event.is_set():
+        return {"error": "cancelled"}
+
+    template = os.path.join(temp_dir, "%(title)s.%(ext)s")
+    opts = _build_ydl_opts(template)
+
+    info = None
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+    except Exception as exc:
+        err = str(exc)
+        if "cancelled" in err.lower():
+            return {"error": "cancelled"}
+        print(f"Download attempt failed: {err}")
+        # Fallback: simpler options
+        fallback_opts = dict(opts)
+        fallback_opts["format"] = "worstaudio/worst"
+        fallback_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
+        fallback_opts.pop("embedthumbnail", None)
+        fallback_opts.pop("writethumbnail", None)
+        try:
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl2:
+                info = ydl2.extract_info(video_url, download=True)
+        except Exception as exc2:
+            return {"error": str(exc2)[:300]}
+
+    if info is None:
+        return {"error": "No info returned from extractor"}
+
+    title = info.get("title", "Unknown")
+    src = _find_downloaded_file(Path(temp_dir))
+    if src is None:
+        return {"error": "No audio file found after download"}
+
+    # Convert to MP3 if necessary
+    if src.suffix.lower() != ".mp3":
+        converted = _convert_to_mp3(src)
+        if converted is None:
+            return {"error": "FFmpeg conversion failed"}
+        src = converted
+
+    # Check for duplicate in library
+    safe = _sanitise_filename(title)
+    dest = MUSIC_DIR / f"{safe}{src.suffix}"
+    if dest.exists():
+        return {"error": f"Already downloaded: {safe}{src.suffix}", "filename": dest.name}
+
+    shutil.copy2(str(src), str(dest))
+    enhance_metadata(dest, info)
+    return {"success": True, "filename": dest.name, "title": title}
+
+
+def _download_playlist(clean_url):
+    """Download all videos in a playlist one by one."""
+    results = {"success": True, "downloaded": [], "errors": [], "total": 0}
+
+    # First, extract playlist entries
+    try:
+        detect_opts = dict(_build_ydl_opts(""))
+        detect_opts["extract_flat"] = False
+        detect_opts["skip_download"] = True
+        with yt_dlp.YoutubeDL(detect_opts) as ydl:
+            playlist_info = ydl.extract_info(clean_url, download=False)
+            if not playlist_info:
+                results["error"] = "No playlist info returned"
+                results["success"] = False
+                return results
+
+            entries = playlist_info.get("entries", [])
+            if not entries:
+                results["error"] = "Playlist is empty"
+                results["success"] = False
+                return results
+
+            results["total"] = len(entries)
+
+            for idx, entry in enumerate(entries):
+                if _download_cancel_event.is_set():
+                    results["status"] = "cancelled"
+                    return results
+
+                # Build the individual video URL
+                video_id = entry.get("id")
+                if not video_id:
+                    results["errors"].append(f"Entry {idx+1}: Could not resolve video ID")
+                    continue
+
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                entry_title = entry.get("title", f"video_{video_id}")
+
+                # Update progress
+                download_progress["status"] = "downloading"
+                download_progress["percent"] = int((idx / len(entries)) * 100)
+                download_progress["current"] = f"[{idx+1}/{len(entries)}] {entry_title}"
+
+                # Create a fresh temp dir for each video
+                video_temp = tempfile.mkdtemp()
+                try:
+                    result = _download_single_video(video_url, video_temp)
+                    if result.get("success"):
+                        results["downloaded"].append(result["filename"])
+                    elif result.get("error") == "cancelled":
+                        results["status"] = "cancelled"
+                        return results
+                    else:
+                        results["errors"].append(f"{entry_title}: {result.get('error', 'Unknown error')}")
+                finally:
+                    shutil.rmtree(video_temp, ignore_errors=True)
+
+            results["downloaded_count"] = len(results["downloaded"])
+            results["error_count"] = len(results["errors"])
+            return results
+
+    except Exception as exc:
+        results["success"] = False
+        results["error"] = str(exc)[:300]
+        return results
+
+
 def start_download(url):
     """
     Kick off a YouTube-to-MP3 download in a background thread.
+    Supports single videos and playlists.
     Returns immediately; poll /api/download/progress for status.
     """
     clean = clean_url(url)
@@ -214,70 +341,56 @@ def start_download(url):
     def _task():
         temp_dir = None
         try:
+            # Determine if this is a playlist URL by checking the URL itself
+            # Pure playlists have "/playlist" in path OR have "list=" with no "v" param
+            parsed = urlparse(clean)
+            params = parse_qs(parsed.query)
+            has_list = "list" in params
+            has_video = "v" in params
+            is_playlist_path = "/playlist" in parsed.path
+
+            # Treat as playlist if:
+            # - Path is /playlist, OR
+            # - Has list= param without a v= param (single video with list param is not a playlist)
+            is_playlist = is_playlist_path or (has_list and not has_video)
+
+            if is_playlist:
+                download_progress["status"] = "starting"
+                download_progress["current"] = "Downloading playlist..."
+                result = _download_playlist(clean)
+
+                if result.get("status") == "cancelled":
+                    download_progress["status"] = "cancelled"
+                elif result.get("success") and result.get("downloaded"):
+                    download_progress["status"] = "completed"
+                    count = result.get("downloaded_count", 0)
+                    download_progress["current"] = f"Downloaded {count} songs"
+                    download_progress["percent"] = 100
+                    if result.get("errors"):
+                        download_progress["current"] += f" ({len(result['errors'])} errors)"
+                else:
+                    download_progress["status"] = "error"
+                    download_progress["current"] = result.get("error") or "Playlist download failed"
+                return
+
+            # Single video download
             temp_dir = tempfile.mkdtemp()
-            template = os.path.join(temp_dir, "%(title)s.%(ext)s")
 
             if _download_cancel_event.is_set():
                 download_progress["status"] = "cancelled"
                 return
 
-            opts = _build_ydl_opts(template)
+            result = _download_single_video(clean, temp_dir)
 
-            # Attempt download (with fallback)
-            info = None
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(clean, download=True)
-            except Exception as exc:
-                err = str(exc)
-                if "cancelled" in err.lower():
-                    download_progress["status"] = "cancelled"
-                    return
-                print(f"Download attempt 1 failed: {err}")
-                # Fallback: simpler options
-                fallback = dict(opts)
-                fallback["format"] = "worstaudio/worst"
-                fallback["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-                fallback.pop("embedthumbnail", None)
-                fallback.pop("writethumbnail", None)
-                with yt_dlp.YoutubeDL(fallback) as ydl:
-                    info = ydl.extract_info(clean, download=True)
-
-            if info is None:
-                download_progress["status"] = "cancelled" if _download_cancel_event.is_set() else "error"
-                download_progress["current"] = "No info returned from extractor"
-                return
-
-            title = info.get("title", "Unknown")
-            src = _find_downloaded_file(Path(temp_dir))
-            if src is None:
+            if result.get("error") == "cancelled":
+                download_progress["status"] = "cancelled"
+            elif result.get("success"):
+                download_progress["status"] = "completed"
+                download_progress["current"] = result["filename"]
+                download_progress["percent"] = 100
+            else:
                 download_progress["status"] = "error"
-                download_progress["current"] = "No audio file found after download"
-                return
-
-            # Convert to MP3 if necessary
-            if src.suffix.lower() != ".mp3":
-                converted = _convert_to_mp3(src)
-                if converted is None:
-                    download_progress["status"] = "error"
-                    download_progress["current"] = "FFmpeg conversion failed"
-                    return
-                src = converted
-
-            # Copy to library
-            safe = _sanitise_filename(title)
-            dest = MUSIC_DIR / f"{safe}{src.suffix}"
-            counter = 1
-            while dest.exists():
-                dest = MUSIC_DIR / f"{safe}_{counter}{src.suffix}"
-                counter += 1
-
-            shutil.copy2(str(src), str(dest))
-            enhance_metadata(dest, info)
-
-            download_progress["status"] = "completed"
-            download_progress["current"] = dest.name
-            download_progress["percent"] = 100
+                download_progress["current"] = result.get("error", "Download failed")
 
         except Exception as exc:
             err = str(exc)

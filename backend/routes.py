@@ -156,11 +156,19 @@ def import_route():
     if not file.filename:
         return jsonify({"error": "No file selected"}), 400
 
+    custom_title = request.form.get("title", "").strip() or None
+    custom_artist = request.form.get("artist", "").strip() or None
+    thumbnail_file = request.files.get("thumbnail", None)
+
     temp = MUSIC_DIR / "_temp_upload" / file.filename
     temp.parent.mkdir(exist_ok=True)
     file.save(str(temp))
 
-    result = import_file(str(temp))
+    custom_thumbnail = None
+    if thumbnail_file and thumbnail_file.filename:
+        custom_thumbnail = thumbnail_file.read()
+
+    result = import_file(str(temp), custom_title=custom_title, custom_artist=custom_artist, custom_thumbnail=custom_thumbnail)
     shutil.rmtree(str(temp.parent), ignore_errors=True)
     return jsonify(result)
 

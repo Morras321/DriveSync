@@ -89,6 +89,18 @@
                     <label>Select files to import</label>
                     <input type="file" id="importFiles" multiple accept=".mp3,.m4a,.wav,.flac,.ogg,.aac,.wma">
                 </div>
+                <div class="form-group">
+                    <label>Custom Title (optional) — rename the song to match app format</label>
+                    <input type="text" id="importTitle" placeholder="e.g. Song Name">
+                </div>
+                <div class="form-group">
+                    <label>Artist Name (optional) — set the artist metadata for the imported song</label>
+                    <input type="text" id="importArtist" placeholder="e.g. Artist Name">
+                </div>
+                <div class="form-group">
+                    <label>Custom Thumbnail (optional) — upload a .jpg image to embed as album art</label>
+                    <input type="file" id="importThumbnail" accept=".jpg,.jpeg,.png">
+                </div>
                 <button class="btn btn-primary btn-block" onclick="startImport()">📤 Import</button>
                 <div id="importStatus" class="status mt-10"></div>
             </div>

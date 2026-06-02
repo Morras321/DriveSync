@@ -7,6 +7,10 @@ async function startImport() {
     const statusEl = document.getElementById('importStatus');
     clearStatus(statusEl);
 
+    const customTitle = document.getElementById('importTitle').value.trim();
+    const customArtist = document.getElementById('importArtist').value.trim();
+    const thumbInput = document.getElementById('importThumbnail');
+
     let imported = 0;
     let errors = [];
 
@@ -16,6 +20,22 @@ async function startImport() {
 
         const formData = new FormData();
         formData.append('file', file);
+
+        // Send custom artist (same for all files)
+        if (customArtist) {
+            formData.append('artist', customArtist);
+        }
+
+        // Send custom title (with counter suffix for multiple files)
+        if (customTitle) {
+            const titleToUse = files.length > 1
+                ? `${customTitle} (${i + 1})`
+                : customTitle;
+            formData.append('title', titleToUse);
+        }
+        if (thumbInput.files.length > 0) {
+            formData.append('thumbnail', thumbInput.files[0]);
+        }
 
         try {
             const res = await fetch('/api/import', { method: 'POST', body: formData });
