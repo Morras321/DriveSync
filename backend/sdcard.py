@@ -100,6 +100,7 @@ def _probe_autofs_mounts():
     autofs_bases = [
         Path(f"/media/{user}"),
         Path("/media"),
+        Path("/media/usb"),
         Path("/mnt"),
         Path(f"/run/media/{user}"),
         Path("/run/media"),
