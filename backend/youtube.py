@@ -8,6 +8,7 @@ and shared state across all users (no blocking).
 import os
 import re
 import json
+import warnings
 import shutil
 import subprocess
 import tempfile
@@ -16,11 +17,14 @@ from threading import Thread, Event, Lock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urlencode
 
+# Suppress yt-dlp's Python 3.9 deprecation warning on Raspberry Pi
+warnings.filterwarnings("ignore", message=".*Python version 3.9.*deprecated.*")
+
 import yt_dlp
 from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB, TYER
 
-from config import MUSIC_DIR, THUMBNAIL_DIR, download_progress
+from config import MUSIC_DIR, THUMBNAIL_DIR, download_progress, IS_WINDOWS
 
 # ---------------------------
 # Cancel Support
@@ -28,8 +32,10 @@ from config import MUSIC_DIR, THUMBNAIL_DIR, download_progress
 _download_cancel_event = Event()
 _progress_lock = Lock()
 
-# Max concurrent downloads for playlist songs (Pi 3 can handle 2-3)
-PLAYLIST_CONCURRENCY = 2
+# Max concurrent downloads for playlist songs
+# Windows (desktop): higher concurrency for faster downloads
+# Linux (Raspberry Pi): lower concurrency to avoid overwhelming the CPU
+PLAYLIST_CONCURRENCY = 5 if IS_WINDOWS else 2
 
 
 def clean_url(url):
@@ -163,7 +169,12 @@ def _sanitise_filename(name):
 
 
 def enhance_metadata(mp3_path, info_dict):
-    """Embed ID3 tags + album art into an MP3 file from yt-dlp info."""
+    """
+    Set ID3 title/artist/album tags.
+    Thumbnail is already embedded by yt-dlp (embedthumbnail=True),
+    so we just extract it from the file to the thumbnail cache instead
+    of re-downloading it (which was causing 30-second delays).
+    """
     if not info_dict:
         return
     try:
@@ -180,32 +191,21 @@ def enhance_metadata(mp3_path, info_dict):
         upload_date = info_dict.get("upload_date", "")
         year = upload_date[:4] if len(upload_date) >= 4 else ""
 
-        # Remove existing APIC tags
-        for key in list(audio.tags.keys()):
-            if key.startswith("APIC:"):
-                del audio.tags[key]
-
+        # Set text tags (these may already be set by FFmpegMetadata, we override them)
         audio.tags.add(TIT2(encoding=3, text=title))
         audio.tags.add(TPE1(encoding=3, text=artist))
         audio.tags.add(TALB(encoding=3, text=album))
         if year:
             audio.tags.add(TYER(encoding=3, text=year))
 
-        # Download & embed thumbnail
-        thumb_url = info_dict.get("thumbnail")
-        if thumb_url:
-            try:
-                import requests
-                resp = requests.get(thumb_url, timeout=15,
-                                    headers={"User-Agent": "Mozilla/5.0"})
-                if resp.status_code == 200:
-                    audio.tags.add(APIC(encoding=3, mime="image/jpeg",
-                                        type=3, desc="Cover", data=resp.content))
-                    thumb_file = THUMBNAIL_DIR / f"{mp3_path.stem}.jpg"
+        # Extract already-embedded thumbnail to cache (fast, no network)
+        thumb_file = THUMBNAIL_DIR / f"{mp3_path.stem}.jpg"
+        if not thumb_file.exists():
+            for tag in audio.tags.values():
+                if isinstance(tag, APIC):
                     with open(thumb_file, "wb") as f:
-                        f.write(resp.content)
-            except Exception as exc:
-                print(f"Thumbnail download failed: {exc}")
+                        f.write(tag.data)
+                    break
 
         audio.save()
     except Exception as exc:
