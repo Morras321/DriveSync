@@ -1,6 +1,8 @@
 """
 DriveSync - YouTube Download Module
 URL cleaning, audio downloading, metadata enhancement, and cancel support.
+Supports concurrent playlist downloads, dual progress bars,
+and shared state across all users (no blocking).
 """
 
 import os
@@ -10,7 +12,8 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from threading import Thread, Event
+from threading import Thread, Event, Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urlencode
 
 import yt_dlp
@@ -23,6 +26,10 @@ from config import MUSIC_DIR, THUMBNAIL_DIR, download_progress
 # Cancel Support
 # ---------------------------
 _download_cancel_event = Event()
+_progress_lock = Lock()
+
+# Max concurrent downloads for playlist songs (Pi 3 can handle 2-3)
+PLAYLIST_CONCURRENCY = 3
 
 
 def clean_url(url):
@@ -56,24 +63,30 @@ def clean_url(url):
     return url
 
 
-def _progress_hook(d):
-    """yt-dlp progress hook – checks cancel flag."""
-    if _download_cancel_event.is_set():
-        raise Exception("Download cancelled by user")
+def _reset_progress(status="idle"):
+    """Reset the shared download_progress dict."""
+    with _progress_lock:
+        download_progress["current"] = None
+        download_progress["status"] = status
+        download_progress["percent"] = 0
+        download_progress["is_playlist"] = False
+        download_progress["total_songs"] = 0
+        download_progress["current_song_index"] = 0
+        download_progress["current_song_name"] = ""
+        download_progress["song_percent"] = 0
+        download_progress["downloaded_count"] = 0
+        download_progress["error_count"] = 0
+        download_progress["errors"] = []
+        download_progress["url"] = ""
+        download_progress["action"] = None
 
-    if d["status"] == "downloading":
-        try:
-            pct = d.get("_percent_str", "0%").strip().replace("%", "")
-            download_progress["percent"] = float(pct)
-        except Exception:
-            download_progress["percent"] = 0
-        download_progress["status"] = "downloading"
-        download_progress["current"] = d.get("filename", "unknown")
-    elif d["status"] == "finished":
-        download_progress["status"] = "processing"
-        download_progress["percent"] = 100
-    elif d["status"] == "error":
-        download_progress["status"] = "error"
+
+def _update_progress(**kwargs):
+    """Thread-safe update of progress dict fields."""
+    with _progress_lock:
+        for k, v in kwargs.items():
+            if k in download_progress:
+                download_progress[k] = v
 
 
 def _build_ydl_opts(output_template):
@@ -101,7 +114,7 @@ def _build_ydl_opts(output_template):
         "writethumbnail": True,
         "embedthumbnail": True,
         "addmetadata": True,
-        "progress_hooks": [_progress_hook],
+        "progress_hooks": [],  # Set per-instance below
         "quiet": True,
         "no_warnings": True,
         "extract_flat": False,
@@ -197,17 +210,52 @@ def enhance_metadata(mp3_path, info_dict):
         print(f"Metadata enhancement failed: {exc}")
 
 
-def _download_single_video(video_url, temp_dir):
+# ── Per-song progress hook ────────────────────────────────────────────
+
+def _make_song_progress_hook(song_index, total_songs, song_name):
+    """Create a progress hook that updates the per-song progress."""
+    def _hook(d):
+        if _download_cancel_event.is_set():
+            raise Exception("Download cancelled by user")
+
+        if d["status"] == "downloading":
+            try:
+                pct = d.get("_percent_str", "0%").strip().replace("%", "")
+                song_pct = float(pct)
+            except Exception:
+                song_pct = 0
+            _update_progress(
+                status="downloading",
+                song_percent=song_pct,
+                current_song_name=song_name,
+                current_song_index=song_index,
+                total_songs=total_songs,
+                # Overall percent: combination of playlist progress + song progress
+                percent=int(((song_index - 1) / total_songs) * 100 +
+                            (song_pct / total_songs)) if total_songs > 1 else int(song_pct),
+            )
+        elif d["status"] == "finished":
+            _update_progress(status="processing", song_percent=100)
+        elif d["status"] == "error":
+            _update_progress(status="error")
+    return _hook
+
+
+# ── Single video download task ───────────────────────────────────────
+
+def _download_single_video_task(video_url, temp_dir, song_index=1, total_songs=1, song_name=""):
     """
     Download a single video URL to temp_dir, convert to MP3, and copy to the library.
-    Creates its own YoutubeDL instance per video so output template is correct.
-    Returns dict {success, filename, error} or raises on cancel.
+    Returns dict {success, filename, error}.
     """
     if _download_cancel_event.is_set():
         return {"error": "cancelled"}
 
     template = os.path.join(temp_dir, "%(title)s.%(ext)s")
     opts = _build_ydl_opts(template)
+
+    # Attach per-song progress hook
+    opts["progress_hooks"] = [_make_song_progress_hook(song_index, total_songs, song_name)]
 
     info = None
     try:
@@ -218,7 +266,6 @@ def _download_single_video(video_url, temp_dir):
         if "cancelled" in err.lower():
             return {"error": "cancelled"}
         print(f"Download attempt failed: {err}")
-        # Fallback: simpler options
         fallback_opts = dict(opts)
         fallback_opts["format"] = "worstaudio/worst"
         fallback_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
@@ -256,71 +303,131 @@ def _download_single_video(video_url, temp_dir):
     return {"success": True, "filename": dest.name, "title": title}
 
 
-def _download_playlist(clean_url):
-    """Download all videos in a playlist one by one."""
-    results = {"success": True, "downloaded": [], "errors": [], "total": 0}
+# ── Playlist download with concurrency ───────────────────────────────
 
-    # First, extract playlist entries
+def _download_playlist(clean_url):
+    """Download all videos in a playlist concurrently (up to PLAYLIST_CONCURRENCY at once)."""
+    _update_progress(is_playlist=True, status="starting")
+
     try:
+        # Extract playlist entries first
         detect_opts = dict(_build_ydl_opts(""))
         detect_opts["extract_flat"] = False
         detect_opts["skip_download"] = True
         with yt_dlp.YoutubeDL(detect_opts) as ydl:
             playlist_info = ydl.extract_info(clean_url, download=False)
-            if not playlist_info:
-                results["error"] = "No playlist info returned"
-                results["success"] = False
-                return results
 
-            entries = playlist_info.get("entries", [])
-            if not entries:
-                results["error"] = "Playlist is empty"
-                results["success"] = False
-                return results
+        if not playlist_info:
+            _update_progress(status="error", current="No playlist info returned")
+            return
 
-            results["total"] = len(entries)
+        entries = playlist_info.get("entries", [])
+        if not entries:
+            _update_progress(status="error", current="Playlist is empty")
+            return
 
-            for idx, entry in enumerate(entries):
+        total = len(entries)
+        _update_progress(total_songs=total, status="starting",
+                         current=f"Preparing {total} songs...")
+
+        # Build task list: (video_url, song_name, entry_id)
+        tasks = []
+        for entry in entries:
+            if _download_cancel_event.is_set():
+                _update_progress(status="cancelled")
+                return
+            video_id = entry.get("id")
+            if not video_id:
+                continue
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            entry_title = entry.get("title", f"video_{video_id}")
+            tasks.append((video_url, entry_title, video_id))
+
+        if not tasks:
+            _update_progress(status="error", current="No valid entries found")
+            return
+
+        downloaded_count = 0
+        error_count = 0
+        errors_list = []
+
+        # Download concurrently using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=PLAYLIST_CONCURRENCY) as executor:
+            # Submit all tasks
+            future_map = {}
+            for idx, (video_url, song_name, vid) in enumerate(tasks):
+                song_index = idx + 1
                 if _download_cancel_event.is_set():
-                    results["status"] = "cancelled"
-                    return results
+                    break
+                temp_dir = tempfile.mkdtemp()
+                future = executor.submit(
+                    _download_single_video_task,
+                    video_url, temp_dir, song_index, total, song_name
+                )
+                future_map[future] = (temp_dir, song_name)
 
-                # Build the individual video URL
-                video_id = entry.get("id")
-                if not video_id:
-                    results["errors"].append(f"Entry {idx+1}: Could not resolve video ID")
-                    continue
-
-                video_url = f"https://www.youtube.com/watch?v={video_id}"
-                entry_title = entry.get("title", f"video_{video_id}")
-
-                # Update progress
-                download_progress["status"] = "downloading"
-                download_progress["percent"] = int((idx / len(entries)) * 100)
-                download_progress["current"] = f"[{idx+1}/{len(entries)}] {entry_title}"
-
-                # Create a fresh temp dir for each video
-                video_temp = tempfile.mkdtemp()
+            # Process results as they complete
+            for future in as_completed(future_map):
+                temp_dir, song_name = future_map[future]
                 try:
-                    result = _download_single_video(video_url, video_temp)
+                    result = future.result()
                     if result.get("success"):
-                        results["downloaded"].append(result["filename"])
+                        downloaded_count += 1
                     elif result.get("error") == "cancelled":
-                        results["status"] = "cancelled"
-                        return results
+                        _update_progress(status="cancelled")
+                        # Clean up remaining temp dirs
+                        for f, (td, _) in future_map.items():
+                            if not f.done():
+                                f.cancel()
+                            shutil.rmtree(td, ignore_errors=True)
+                        return
                     else:
-                        results["errors"].append(f"{entry_title}: {result.get('error', 'Unknown error')}")
+                        error_count += 1
+                        errors_list.append(f"{song_name}: {result.get('error', 'Unknown error')}")
+                except Exception as exc:
+                    error_count += 1
+                    errors_list.append(f"{song_name}: {str(exc)[:200]}")
                 finally:
-                    shutil.rmtree(video_temp, ignore_errors=True)
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
-            results["downloaded_count"] = len(results["downloaded"])
-            results["error_count"] = len(results["errors"])
-            return results
+                _update_progress(
+                    downloaded_count=downloaded_count,
+                    error_count=error_count,
+                    errors=errors_list,
+                    percent=int((downloaded_count + error_count) / total * 100) if total > 0 else 0,
+                )
+
+        # Final report
+        if _download_cancel_event.is_set():
+            _update_progress(status="cancelled")
+        else:
+            msg = f"Downloaded {downloaded_count} of {total} songs"
+            if errors_list:
+                msg += f" ({error_count} errors)"
+            _update_progress(
+                status="completed",
+                current=msg,
+                percent=100,
+                downloaded_count=downloaded_count,
+                error_count=error_count,
+                errors=errors_list,
+            )
 
     except Exception as exc:
-        results["success"] = False
-        results["error"] = str(exc)[:300]
-        return results
+        err = str(exc)[:300]
+        if _download_cancel_event.is_set():
+            _update_progress(status="cancelled")
+        else:
+            _update_progress(status="error", current=err)
+        print(f"Playlist download error: {err}")
+
+
+# ── Public API ────────────────────────────────────────────────────────
+
+def is_download_active():
+    """Return True if a download is currently in progress."""
+    with _progress_lock:
+        return download_progress["status"] in ("starting", "downloading", "processing", "cancelling")
 
 
 def start_download(url):
@@ -329,80 +436,67 @@ def start_download(url):
     Supports single videos and playlists.
     Returns immediately; poll /api/download/progress for status.
     """
+    # Reject if another download is already running
+    if is_download_active():
+        return {"error": "A download is already in progress. Cancel it first or wait for it to complete."}
+
     clean = clean_url(url)
     if clean != url:
         print(f"URL cleaned: {url[:80]} -> {clean[:80]}")
 
-    download_progress["status"] = "starting"
-    download_progress["percent"] = 0
-    download_progress["current"] = clean
+    _reset_progress("starting")
+    _update_progress(url=clean, current=clean)
     _download_cancel_event.clear()
 
     def _task():
-        temp_dir = None
         try:
-            # Determine if this is a playlist URL by checking the URL itself
-            # Pure playlists have "/playlist" in path OR have "list=" with no "v" param
+            # Determine if this is a playlist URL
             parsed = urlparse(clean)
             params = parse_qs(parsed.query)
             has_list = "list" in params
             has_video = "v" in params
             is_playlist_path = "/playlist" in parsed.path
 
-            # Treat as playlist if:
-            # - Path is /playlist, OR
-            # - Has list= param without a v= param (single video with list param is not a playlist)
             is_playlist = is_playlist_path or (has_list and not has_video)
 
             if is_playlist:
-                download_progress["status"] = "starting"
-                download_progress["current"] = "Downloading playlist..."
-                result = _download_playlist(clean)
-
-                if result.get("status") == "cancelled":
-                    download_progress["status"] = "cancelled"
-                elif result.get("success") and result.get("downloaded"):
-                    download_progress["status"] = "completed"
-                    count = result.get("downloaded_count", 0)
-                    download_progress["current"] = f"Downloaded {count} songs"
-                    download_progress["percent"] = 100
-                    if result.get("errors"):
-                        download_progress["current"] += f" ({len(result['errors'])} errors)"
-                else:
-                    download_progress["status"] = "error"
-                    download_progress["current"] = result.get("error") or "Playlist download failed"
+                _update_progress(
+                    status="starting",
+                    current="Initializing playlist download...",
+                    is_playlist=True,
+                )
+                _download_playlist(clean)
                 return
 
             # Single video download
             temp_dir = tempfile.mkdtemp()
+            try:
+                result = _download_single_video_task(clean, temp_dir, 1, 1, clean)
 
-            if _download_cancel_event.is_set():
-                download_progress["status"] = "cancelled"
-                return
-
-            result = _download_single_video(clean, temp_dir)
-
-            if result.get("error") == "cancelled":
-                download_progress["status"] = "cancelled"
-            elif result.get("success"):
-                download_progress["status"] = "completed"
-                download_progress["current"] = result["filename"]
-                download_progress["percent"] = 100
-            else:
-                download_progress["status"] = "error"
-                download_progress["current"] = result.get("error", "Download failed")
+                if _download_cancel_event.is_set():
+                    _update_progress(status="cancelled")
+                elif result.get("success"):
+                    _update_progress(
+                        status="completed",
+                        current=result["filename"],
+                        percent=100,
+                        downloaded_count=1,
+                    )
+                else:
+                    _update_progress(
+                        status="error",
+                        current=result.get("error", "Download failed"),
+                    )
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as exc:
             err = str(exc)
             if _download_cancel_event.is_set():
-                download_progress["status"] = "cancelled"
+                _update_progress(status="cancelled")
             else:
-                download_progress["status"] = "error"
-                download_progress["current"] = err[:300]
+                _update_progress(status="error", current=err[:300])
                 print(f"Download error: {err}")
-        finally:
-            if temp_dir:
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
     Thread(target=_task, daemon=True).start()
     return {"status": "started", "message": "Download started"}
@@ -411,4 +505,4 @@ def start_download(url):
 def cancel_download():
     """Signal the running download to stop."""
     _download_cancel_event.set()
-    download_progress["status"] = "cancelling"
+    _update_progress(status="cancelling", action="cancel")

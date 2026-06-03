@@ -31,9 +31,25 @@ EXTRA_MUSIC_DIRS = [Path(p.strip()) for p in _extra_dirs.split(",") if p.strip()
 IS_WINDOWS = platform.system() == "Windows"
 
 # ---------------------------
-# Runtime State
+# Runtime State (shared across all users/requests)
 # ---------------------------
-download_progress = {"current": None, "status": "idle", "percent": 0}
+download_progress = {
+    "current": None,          # Current song title / filename
+    "status": "idle",         # idle, starting, downloading, processing, completed, error, cancelled, cancelling
+    "percent": 0,             # Overall progress (0-100)
+    # Playlist-specific fields
+    "is_playlist": False,     # True if currently downloading a playlist
+    "total_songs": 0,         # Total songs in the playlist
+    "current_song_index": 0,  # 1-based index of current song
+    "current_song_name": "",  # Name of current song being downloaded
+    "song_percent": 0,        # Progress of current individual song (0-100)
+    "downloaded_count": 0,    # Successfully downloaded so far
+    "error_count": 0,         # Failed so far
+    "errors": [],             # List of error messages
+    "url": "",                # The URL being downloaded
+    # Download management
+    "action": None,           # Set to "cancel" to signal cancellation
+}
 
 # Ensure directories exist on import
 for d in [MUSIC_DIR, PLAYLIST_DIR, THUMBNAIL_DIR]:

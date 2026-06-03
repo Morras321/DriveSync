@@ -172,6 +172,12 @@ textarea { resize: vertical; }
 /* ── Progress ─────────────────────────────── */
 .progress-bar { width: 100%; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); border-radius: 3px; transition: width .3s ease; width: 0; }
+.progress-fill-playlist { background: linear-gradient(90deg, var(--accent), #00b894); height: 8px; }
+.progress-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.progress-count { font-size: 11px; color: var(--text-muted); }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+#playlistProgressSection { margin-bottom: 12px; }
+#songProgressSection { margin-bottom: 8px; }
 .progress-text { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
 /* ── Status Messages ──────────────────────── */

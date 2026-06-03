@@ -63,7 +63,20 @@
                 </div>
                 <div id="downloadStatus" class="status mt-10"></div>
                 <div id="progressContainer" style="display:none;" class="mt-10">
-                    <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+                    <div id="playlistProgressSection">
+                        <div class="flex-between">
+                            <span id="playlistProgressLabel" class="progress-label">Playlist Progress</span>
+                            <span id="playlistProgressCount" class="progress-count">0 / 0</span>
+                        </div>
+                        <div class="progress-bar"><div id="playlistProgressFill" class="progress-fill progress-fill-playlist"></div></div>
+                    </div>
+                    <div id="songProgressSection">
+                        <div class="flex-between">
+                            <span id="songProgressLabel" class="progress-label">Current Song</span>
+                            <span id="songProgressName" class="progress-count"></span>
+                        </div>
+                        <div class="progress-bar"><div id="songProgressFill" class="progress-fill"></div></div>
+                    </div>
                     <div id="progressText" class="progress-text">Starting...</div>
                 </div>
             </div>
