@@ -101,6 +101,61 @@ def add_song(playlist_id, song_id):
     return False
 
 
+def add_songs_by_artist(playlist_id, artist_name):
+    """
+    Add all songs matching an artist name to a playlist.
+    Returns the count of songs added.
+    """
+    playlist = get_playlist(playlist_id)
+    if not playlist:
+        return 0
+
+    added = 0
+    artist_lower = artist_name.strip().lower()
+    existing = set(playlist["songs"])
+
+    for f in MUSIC_DIR.glob("*.mp3"):
+        if f.name in existing:
+            continue
+        # Check artist via ID3 tags
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(f)
+            artist = str(audio.tags.get("TPE1", "")).lower() if audio.tags else ""
+        except Exception:
+            artist = ""
+
+        # Also check filename for artist prefix (e.g. "Artist - Title.mp3")
+        name_artist = ""
+        if " - " in f.stem:
+            name_artist = f.stem.split(" - ", 1)[0].lower()
+
+        if artist_lower in artist or artist_lower in name_artist:
+            playlist["songs"].append(f.name)
+            existing.add(f.name)
+            added += 1
+
+    if added > 0:
+        save_playlist(playlist_id, playlist)
+
+    return added
+
+
+def get_artists():
+    """Return a sorted list of unique artist names from all MP3 files."""
+    artists = set()
+    for f in MUSIC_DIR.glob("*.mp3"):
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(f)
+            artist = str(audio.tags.get("TPE1", "")).strip() if audio.tags else ""
+            if artist:
+                artists.add(artist)
+        except Exception:
+            pass
+    return sorted(artists)
+
+
 def remove_song(playlist_id, song_filename):
     """Remove a song from a playlist by its filename."""
     playlist = get_playlist(playlist_id)

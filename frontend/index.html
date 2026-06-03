@@ -145,6 +145,16 @@
                     <input type="search" id="playlistSearch" placeholder="Search songs..." oninput="showPlaylistAddSongs()">
                 </div>
                 <div id="playlistAddSongs"></div>
+                <div class="batch-add-section" style="margin: 12px 0; padding: 12px; background: var(--bg); border-radius: 8px;">
+                    <label style="font-size:12px;color:var(--text-muted);font-weight:600;display:block;margin-bottom:6px;">📦 Batch Add by Artist</label>
+                    <div style="display:flex;gap:8px;">
+                        <select id="batchArtistSelect" style="flex:1;">
+                            <option value="">-- Select an artist --</option>
+                        </select>
+                        <button class="btn btn-accent btn-sm" onclick="batchAddByArtist()">+ Add All</button>
+                    </div>
+                    <div id="batchStatus" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
+                </div>
                 <h3 class="mt-16">Playlist Songs</h3>
                 <div id="playlistSongs"></div>
             </div>

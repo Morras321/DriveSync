@@ -89,6 +89,7 @@ async function viewPlaylist(id) {
             songsContainer.innerHTML = '<div class="empty-state"><p>No songs in this playlist yet</p></div>';
         }
         showPlaylistAddSongs();
+        loadArtistsForBatch();
     } catch (e) { alert('Error loading playlist'); }
 }
 
@@ -178,4 +179,52 @@ async function deleteCurrentPlaylist() {
         await fetch(`/api/playlists/${DS.currentPlaylistId}`, { method: 'DELETE' });
         backToPlaylists();
     } catch(e) { alert('Error deleting playlist'); }
+}
+
+// ── Batch Add by Artist ──────────────────────────────────────────────
+
+async function loadArtistsForBatch() {
+    const select = document.getElementById('batchArtistSelect');
+    try {
+        const res = await fetch('/api/artists');
+        const artists = await res.json();
+        let html = '<option value="">-- Select an artist --</option>';
+        artists.forEach(a => {
+			console.log(a);
+            const safe = escHtml(a);
+            html += `<option value="${safe}">${safe}</option>`;
+        });
+        select.innerHTML = html;
+    } catch(e) {
+        select.innerHTML = '<option value="">Error loading artists</option>';
+    }
+}
+
+async function batchAddByArtist() {
+    if (!DS.currentPlaylistId) return;
+    const select = document.getElementById('batchArtistSelect');
+    const artist = select.value;
+    if (!artist) { alert('Please select an artist'); return; }
+
+    if (!confirm(`Add all songs by "${artist}" to this playlist?`)) return;
+
+    const statusEl = document.getElementById('batchStatus');
+    statusEl.textContent = 'Adding songs...';
+
+    try {
+        const res = await fetch(`/api/playlists/${DS.currentPlaylistId}/songs/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artist })
+        });
+        const data = await res.json();
+        if (data.success) {
+            statusEl.textContent = `✅ Added ${data.added} songs by "${artist}"`;
+            viewPlaylist(DS.currentPlaylistId);
+        } else {
+            statusEl.textContent = '❌ Error: ' + (data.error || 'Unknown');
+        }
+    } catch(e) {
+        statusEl.textContent = '❌ Error adding songs';
+    }
 }

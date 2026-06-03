@@ -18,6 +18,8 @@ from playlist import (
     create_playlist,
     delete_playlist,
     add_song,
+    add_songs_by_artist,
+    get_artists,
     remove_song,
     shuffle_playlist,
     unshuffle_playlist,
@@ -217,6 +219,23 @@ def add_song_route(playlist_id):
 def remove_song_route(playlist_id, song_filename):
     ok = remove_song(playlist_id, song_filename)
     return jsonify({"success": ok})
+
+
+@api.route("/api/artists")
+def list_artists():
+    """Return a sorted list of unique artist names from the library."""
+    return jsonify(get_artists())
+
+
+@api.route("/api/playlists/<playlist_id>/songs/batch", methods=["POST"])
+def add_songs_batch_route(playlist_id):
+    """Batch-add songs to a playlist by artist name."""
+    data = request.json or {}
+    artist = data.get("artist", "").strip()
+    if not artist:
+        return jsonify({"error": "Artist name required"}), 400
+    count = add_songs_by_artist(playlist_id, artist)
+    return jsonify({"success": True, "added": count})
 
 
 @api.route("/api/playlists/<playlist_id>/shuffle", methods=["POST"])
