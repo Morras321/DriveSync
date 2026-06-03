@@ -11,13 +11,14 @@ DriveSync is a self-hosted web application that lets you download music from You
 | Feature | Description |
 |---|---|
 | **📚 Music Library** | Browse all your MP3s with album art, metadata, duration, and size. Search by song or artist. |
-| **⬇️ YouTube Download** | Paste any YouTube URL — videos and playlists — and download as 320kbps MP3 with ID3 tags (title, artist, album, year, cover art). URLs are automatically cleaned of tracking parameters. |
-| **📤 File Import** | Upload MP3, M4A, WAV, FLAC, OGG, AAC, WMA. Non-MP3 files are auto-converted via FFmpeg. |
+| **⬇️ YouTube Download** | Paste any YouTube URL — **single videos and full playlists** — and download as 192kbps MP3 with ID3 tags (title, artist, album, year, cover art). URLs are automatically cleaned of tracking parameters. Duplicate detection prevents re-downloading existing songs. |
+| **📤 File Import** | Upload MP3, M4A, WAV, FLAC, OGG, AAC, WMA. Non-MP3 files are auto-converted via FFmpeg. Duplicate detection prevents re-importing existing files. Optionally set **custom title**, **artist name**, and **thumbnail/album art** during import to match your library format. |
 | **📋 Playlists** | Create playlists, add songs from the library, shuffle/unshuffle with original-order restoration. |
 | **💾 Drive Export** | Export any playlist as a folder to a USB drive, SD card, or external disk. Optionally add `001_`, `002_`… prefixes for playback order. Choose a subfolder (e.g. `Playlists/Music`) for organisation. View and delete existing playlist folders directly from the UI. |
 | **🎧 Audio Preview** | Click any song thumbnail to preview playback with a built-in mini-player. |
 | **🖥️ Cross-Platform** | Runs on **Windows** and **Linux** (including Raspberry Pi). Install scripts included. |
 | **🌐 Network Access** | Access from any device on your LAN via any modern web browser. |
+| **🔄 Auto-mount Support** | Linux autofs mount points are detected by probing directories, triggering the automounter to mount drives on demand. |
 
 ---
 
@@ -104,13 +105,13 @@ DriveSync/
 │       ├── player.js        # Audio preview (play/pause/stop)
 │       ├── library.js       # Library listing, delete, playlist picker modal
 │       ├── download.js      # Single/batch download, cancel, progress polling
-│       ├── import.js        # File upload import
+│       ├── import.js        # File upload import with custom metadata
 │       ├── playlists.js     # CRUD, shuffle/unshuffle, add/remove songs
 │       └── sdcard.js        # Drive detection, folder management, export
 ├── music_downloads/         # Downloaded/imported MP3 files
 │   └── .thumbnails/         # Cached album art thumbnails
 ├── playlists/               # Playlist data (JSON)
-├── install.sh               # Linux installer (Debian/Raspberry Pi)
+├── install.sh               # Linux installer (Debian/Raspberry Pi) with systemd support
 ├── install.ps1              # Windows PowerShell installer
 ├── requirements.txt         # Python dependencies
 └── README.md                # This file
@@ -145,30 +146,25 @@ python backend/main.py --host 0.0.0.0 --port 8080 --debug
 | `/api/songs` | GET | List all songs (optional `?search=`) |
 | `/api/songs/{id}/stream` | GET | Stream MP3 audio (range-request supported) |
 | `/api/songs/{id}/delete` | DELETE | Remove a song from the library |
-| `/api/download` | POST | Start a YouTube download |
+| `/api/download` | POST | Start a YouTube download (single video or full playlist) |
 | `/api/download/progress` | GET | Poll download progress |
 | `/api/download/cancel` | POST | Cancel the current download |
-| `/api/import` | POST | Upload audio files |
+| `/api/import` | POST | Upload audio files (supports `title`, `artist`, `thumbnail` form fields) |
+| `/api/thumbnails/{filename}` | GET | Retrieve cached thumbnail image |
 | `/api/playlists` | GET/POST | List / create playlists |
 | `/api/playlists/{id}` | GET/DELETE | Get / delete a playlist |
 | `/api/playlists/{id}/songs` | POST | Add a song to a playlist |
 | `/api/playlists/{id}/songs/{filename}` | DELETE | Remove a song from a playlist |
 | `/api/playlists/{id}/shuffle` | POST | Shuffle playlist (saves original order) |
 | `/api/playlists/{id}/unshuffle` | POST | Restore original order |
+| `/api/playlists/{id}/order` | POST | Manually reorder playlist songs |
 | `/api/sdcard` | GET | List detected removable drives |
 | `/api/sdcard/export` | POST | Export a playlist to a drive |
 | `/api/sdcard/folders` | POST | List playlist folders on a drive |
+| `/api/sdcard/folders/songs` | POST | List songs in a specific folder |
+| `/api/sdcard/folders/add-song` | POST | Add a song to a folder on the drive |
 | `/api/sdcard/folders/delete` | POST | Delete a playlist folder from a drive |
-
----
-
-## 🛠️ Built With
-
-- **[Flask](https://flask.palletsprojects.com/)** — Python web framework
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — YouTube audio download
-- **[Mutagen](https://mutagen.readthedocs.io/)** — MP3 ID3 metadata editing
-- **[FFmpeg](https://ffmpeg.org/)** — Audio conversion (non-MP3 formats)
-- **Vanilla HTML/CSS/JS** — No frontend frameworks, no external dependencies
+| `/api/storage` | GET | Disk usage info for all music directories |
 
 ---
 
@@ -187,12 +183,88 @@ chmod +x install.sh
 ./run.sh
 ```
 
-For permanent background operation:
+### Auto-start on Boot (systemd)
+
+The installer can create a systemd service so DriveSync starts automatically when the Raspberry Pi boots up:
+
 ```bash
-nohup ./run.sh > drivesync.log 2>&1 &
+cd DriveSync
+chmod +x install.sh
+
+# Install with systemd service creation
+sudo ./install.sh --service --user pi --port 5000
+
+# Start the service immediately
+sudo systemctl start drivesync
+
+# Check status
+sudo systemctl status drivesync
+
+# View live logs
+sudo journalctl -u drivesync -f
 ```
 
-Or create a systemd service (`/etc/systemd/system/drivesync.service`).
+**Installer options:**
+
+| Option | Description |
+|---|---|
+| `--service` | Install dependencies and create a systemd service |
+| `--user <username>` | User to run the service as (default: current user) |
+| `--port <port>` | Web server port (default: 5000) |
+| `--help` | Show usage information |
+
+The service will:
+- Auto-start on every boot
+- Automatically restart if the process crashes (5-second delay)
+- Wait for network connectivity before starting
+- Log to the system journal
+
+---
+
+## 📤 Importing with Custom Metadata
+
+When importing audio files, you can set **custom title**, **artist name**, and **thumbnail/album art** directly from the UI:
+
+1. Go to the **Import** tab
+2. Select your audio file(s)
+3. Optionally enter a **Custom Title** (the filename will be renamed to match)
+4. Optionally enter an **Artist Name** (sets the ID3 artist tag)
+5. Optionally upload a **Custom Thumbnail** image (embedded as album art)
+6. Click **Import**
+
+The file will be saved with your custom name and embedded with the provided metadata, preventing "Unknown Artist" labels in your library.
+
+---
+
+## 💾 Drive Detection & autofs Support
+
+DriveSync detects removable drives on:
+
+- **Windows**: All non-system drive letters (D:, E:, etc.)
+- **Linux**:
+  1. `lsblk --json` for structured block device detection
+  2. Fallback to plain `lsblk` text output
+  3. **autofs support** — scans `/media`, `/mnt`, `/run/media` directories and accesses each subdirectory to trigger the autofs automounter, making dynamically-mounted drives visible to the application
+
+---
+
+## 🛠️ Built With
+
+- **[Flask](https://flask.palletsprojects.com/)** — Python web framework
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — YouTube audio download
+- **[Mutagen](https://mutagen.readthedocs.io/)** — MP3 ID3 metadata editing
+- **[FFmpeg](https://ffmpeg.org/)** — Audio conversion (non-MP3 formats)
+- **Vanilla HTML/CSS/JS** — No frontend frameworks, no external dependencies
+
+---
+
+## 🔄 Recent Changes
+
+- **Playlist downloading** — Full YouTube playlists are now downloaded correctly, with each video processed individually and saved with its proper title and metadata
+- **Duplicate detection** — Downloading or importing a song that already exists in the library now shows an error instead of creating `_1` suffixed copies
+- **Custom import metadata** — Set song title, artist name, and album art when importing files
+- **autofs support** — Linux drives managed by autofs are properly detected by triggering mounts on access
+- **systemd integration** — One-command installer option creates a systemd service for auto-start on boot
 
 ---
 
@@ -205,7 +277,13 @@ This project is open source and available under the [MIT License](LICENSE).
 ## 🙋 FAQ
 
 **Q: Can I download entire YouTube playlists?**  
-A: Yes! Just paste the playlist URL (e.g. `https://www.youtube.com/playlist?list=...`).
+A: Yes! Just paste the playlist URL (e.g. `https://www.youtube.com/playlist?list=...`). All songs will be downloaded sequentially with correct titles and metadata.
+
+**Q: What happens if I try to import a song that's already in the library?**  
+A: DriveSync will show an error: "Already imported: filename.mp3" — no duplicate files are created.
+
+**Q: How do I set the artist name when importing a song?**  
+A: Use the **Artist Name** field in the Import tab. The artist metadata will be embedded in the ID3 tags.
 
 **Q: Why is the download stuck / showing 403 errors?**  
 A: yt-dlp uses modern User-Agent headers and client emulation. If issues persist, update yt-dlp: `pip install -U yt-dlp`.
@@ -215,3 +293,9 @@ A: Run `ipconfig` (Windows) or `ip addr` (Linux) and look for your local network
 
 **Q: Can I access DriveSync from my phone?**  
 A: Yes — the web UI is fully responsive and works on mobile browsers.
+
+**Q: How do I make DriveSync start automatically on my Raspberry Pi?**  
+A: Run `sudo ./install.sh --service --user pi` — this creates a systemd service that starts DriveSync on every boot.
+
+**Q: My USB drive is mounted with autofs and DriveSync doesn't see it?**  
+A: DriveSync now probes autofs mount points by accessing them, which triggers the automounter. Click **Scan** in the UI to detect dynamically-mounted drives.

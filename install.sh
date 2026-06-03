@@ -3,8 +3,56 @@
 # DriveSync Installer for Linux (Raspberry Pi / Ubuntu / Debian)
 # =============================================================================
 # This script creates a Python virtual environment and installs all dependencies.
+#
+# Usage:
+#   ./install.sh              - Install dependencies only
+#   ./install.sh --service    - Install dependencies + create systemd service
+#   ./install.sh --help       - Show this help
+# =============================================================================
 
 set -e
+
+# ── Parse arguments ─────────────────────────────────────────────────────
+CREATE_SERVICE=false
+SERVICE_USER=""
+SERVICE_PORT=5000
+
+usage() {
+    echo "DriveSync Installer"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --service             Install and create a systemd service for auto-start on boot"
+    echo "  --user <username>     User to run the service as (default: current user)"
+    echo "  --port <port>         Port for the web server (default: 5000)"
+    echo "  --help                Show this help message"
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service)
+            CREATE_SERVICE=true
+            shift
+            ;;
+        --user)
+            SERVICE_USER="$2"
+            shift 2
+            ;;
+        --port)
+            SERVICE_PORT="$2"
+            shift 2
+            ;;
+        --help)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
 
 echo "========================================"
 echo "  DriveSync - Linux Installer"
@@ -14,6 +62,11 @@ echo ""
 # Navigate to project root (directory where this script lives)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Determine service user
+if [ -z "$SERVICE_USER" ]; then
+    SERVICE_USER=$(whoami)
+fi
 
 # Check Python availability
 PYTHON=""
@@ -30,7 +83,6 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
-PY_VERSION=$($PYTHON --version 2>&1 | grep -oP '\d+\.\d+')
 echo "✅ Found Python: $($PYTHON --version)"
 
 # Check for ffmpeg (required for audio conversion)
@@ -135,3 +187,59 @@ RUNEOF
 
 chmod +x run.sh
 echo "✅ Created run.sh launcher"
+
+# ── Systemd Service ─────────────────────────────────────────────────────
+if [ "$CREATE_SERVICE" = true ]; then
+    echo ""
+    echo "⏱️  Creating systemd service for auto-start on boot..."
+    SERVICE_NAME="drivesync"
+    SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+    cat > /tmp/${SERVICE_NAME}.service << SERVICEEOF
+[Unit]
+Description=DriveSync - Music Manager
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+WorkingDirectory=${SCRIPT_DIR}
+ExecStart=${SCRIPT_DIR}/venv/bin/python ${SCRIPT_DIR}/backend/main.py --host 0.0.0.0 --port ${SERVICE_PORT}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+    sudo mv /tmp/${SERVICE_NAME}.service "$SERVICE_FILE"
+    sudo chmod 644 "$SERVICE_FILE"
+
+    # Reload systemd and enable service
+    sudo systemctl daemon-reload
+    sudo systemctl enable ${SERVICE_NAME}.service
+
+    echo ""
+    echo "========================================"
+    echo "✅ Systemd service created!"
+    echo "========================================"
+    echo ""
+    echo "Service name: ${SERVICE_NAME}"
+    echo "Service file: ${SERVICE_FILE}"
+    echo "User:         ${SERVICE_USER}"
+    echo "Port:         ${SERVICE_PORT}"
+    echo ""
+    echo "Commands:"
+    echo "  sudo systemctl start  ${SERVICE_NAME}   # Start now"
+    echo "  sudo systemctl stop   ${SERVICE_NAME}   # Stop"
+    echo "  sudo systemctl status ${SERVICE_NAME}   # Check status"
+    echo "  sudo journalctl -u    ${SERVICE_NAME}   # View logs"
+    echo ""
+    echo "The service will auto-start on every boot."
+    echo ""
+    echo "⚠️  You may need to reboot or start the service manually:"
+    echo "   sudo systemctl start ${SERVICE_NAME}"
+fi
