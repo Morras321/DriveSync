@@ -168,6 +168,23 @@ def _sanitise_filename(name):
     return safe[:100]
 
 
+def _song_exists_in_library(title):
+    """
+    Check if a song with the given title already exists in any music directory.
+    Matches by sanitised filename (same logic as _download_single_video_task).
+    Returns True if found, False otherwise.
+    """
+    safe = _sanitise_filename(title)
+    from config import get_all_music_dirs
+    for d in get_all_music_dirs():
+        if not d.exists():
+            continue
+        for ext in [".mp3", ".m4a", ".webm", ".opus"]:
+            if (d / f"{safe}{ext}").exists():
+                return True
+    return False
+
+
 def enhance_metadata(mp3_path, info_dict):
     """Embed ID3 tags + album art into an MP3 file from yt-dlp info."""
     if not info_dict:
@@ -361,15 +378,26 @@ def _download_playlist(clean_url):
                      current="Extracting playlist entries...")
 
     # Extract entries with None-filtering
-    entries = _extract_playlist_entries(clean_url)
+    all_entries = _extract_playlist_entries(clean_url)
 
-    if not entries:
+    if not all_entries:
         _update_progress(status="error", current="No valid entries found in playlist")
         return
 
+    # Filter out entries that already exist in the library
+    _update_progress(status="starting",
+                     current="Checking which songs already exist in the library...")
+    entries = []
+    skipped_count = 0
+    for video_id, title in all_entries:
+        if _song_exists_in_library(title):
+            skipped_count += 1
+        else:
+            entries.append((video_id, title))
+
     total = len(entries)
     _update_progress(total_songs=total, status="starting",
-                     current=f"Downloading {total} songs...")
+                     current=f"Downloading {total} songs ({skipped_count} already in library)..." if skipped_count else f"Downloading {total} songs...")
 
     downloaded_count = 0
     error_count = 0
@@ -462,6 +490,73 @@ def _download_playlist(clean_url):
             error_count=error_count,
             errors=errors_list,
         )
+
+
+def check_missing_songs(url):
+    """
+    Check which songs from a YouTube/playlist URL are NOT already in the library.
+    Returns a dict with:
+      - total: total number of songs in the source
+      - missing: list of {video_id, title} that need downloading
+      - existing_count: number of songs already in the library
+    Does NOT download anything.
+    """
+    clean = clean_url(url)
+    
+    # Determine if this is a playlist URL
+    parsed = urlparse(clean)
+    params = parse_qs(parsed.query)
+    has_list = "list" in params
+    has_video = "v" in params
+    is_playlist_path = "/playlist" in parsed.path
+    
+    is_playlist = is_playlist_path or (has_list and not has_video)
+    
+    if not is_playlist:
+        # Single video - just check if it exists
+        # We need the title, so extract info
+        try:
+            detect_opts = dict(_build_ydl_opts(""))
+            detect_opts.pop("extract_flat", None)
+            detect_opts["extract_flat"] = "in_playlist"
+            detect_opts["skip_download"] = True
+            detect_opts["ignoreerrors"] = True
+            with yt_dlp.YoutubeDL(detect_opts) as ydl:
+                info = ydl.extract_info(clean, download=False)
+            if info:
+                title = info.get("title", "Unknown")
+                exists = _song_exists_in_library(title)
+                return {
+                    "total": 1,
+                    "missing": [] if exists else [{"video_id": info.get("id"), "title": title}],
+                    "existing_count": 1 if exists else 0,
+                    "existing_titles": [title] if exists else [],
+                    "is_playlist": False,
+                }
+        except Exception as exc:
+            return {"error": str(exc)[:300], "total": 0, "missing": [], "existing_count": 0, "existing_titles": [], "is_playlist": False}
+        return {"total": 0, "missing": [], "existing_count": 0, "existing_titles": [], "is_playlist": False}
+    
+    # Playlist - extract entries and check each
+    entries = _extract_playlist_entries(clean)
+    if not entries:
+        return {"error": "No entries found in playlist", "total": 0, "missing": [], "existing_count": 0, "existing_titles": [], "is_playlist": True}
+    
+    missing = []
+    existing_titles = []
+    for video_id, title in entries:
+        if _song_exists_in_library(title):
+            existing_titles.append(title)
+        else:
+            missing.append({"video_id": video_id, "title": title})
+    
+    return {
+        "total": len(entries),
+        "missing": missing,
+        "existing_count": len(existing_titles),
+        "existing_titles": existing_titles,
+        "is_playlist": True,
+    }
 
 
 # ── Public API ────────────────────────────────────────────────────────

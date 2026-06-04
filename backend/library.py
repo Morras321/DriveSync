@@ -16,21 +16,41 @@ from config import MUSIC_DIR, THUMBNAIL_DIR, VALID_AUDIO_EXTENSIONS, get_all_mus
 
 # Cache of which dir a song_id belongs to
 _song_location_cache = {}
+# Cache for full song info (keyed by resolved filepath) for performance
+_song_info_cache = {}
+# Track last known file count to invalidate cache
+_last_file_count = 0
 
 
 def _rebuild_cache():
-    """Scan all music dirs and build song_id -> path mapping."""
-    _song_location_cache.clear()
+    """Scan all music dirs and build song_id -> path mapping. Also checks if cache needs invalidating."""
+    global _last_file_count, _song_info_cache
+    
+    # Count total files to detect changes
+    total_files = 0
     for d in get_all_music_dirs():
         if d.exists():
-            for f in d.glob("*.mp3"):
-                _song_location_cache[f.stem] = f
+            total_files += len(list(d.glob("*.mp3")))
+    
+    # If file count changed, clear all caches
+    if total_files != _last_file_count:
+        _song_location_cache.clear()
+        _song_info_cache.clear()
+        _last_file_count = total_files
+    
+    # Rebuild location cache if needed
+    if not _song_location_cache:
+        for d in get_all_music_dirs():
+            if d.exists():
+                for f in d.glob("*.mp3"):
+                    _song_location_cache[f.stem] = f
 
 
 # ── Query ──────────────────────────────────────────────────────────────
 
 def get_all_songs():
-    """Return a list of song-info dicts for every MP3 across all music dirs."""
+    """Return a list of song-info dicts for every MP3 across all music dirs.
+    Uses caching for fast repeated access (e.g. when searching)."""
     _rebuild_cache()
     songs = []
     seen = set()
@@ -42,7 +62,13 @@ def get_all_songs():
             if resolved in seen:
                 continue
             seen.add(resolved)
-            info = get_song_info(f)
+            # Use cached info if available
+            if resolved in _song_info_cache:
+                info = _song_info_cache[resolved]
+            else:
+                info = get_song_info(f)
+                if info:
+                    _song_info_cache[resolved] = info
             if info:
                 songs.append(info)
     return songs

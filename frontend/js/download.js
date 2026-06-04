@@ -177,6 +177,94 @@ async function startBatchDownload() {
 }
 
 
+async function checkMissingSongs() {
+    const url = document.getElementById('downloadUrl').value.trim();
+    if (!url) { alert('Please enter a YouTube URL'); return; }
+
+    const resultsEl = document.getElementById('checkMissingResults');
+    const statusEl = document.getElementById('downloadStatus');
+    clearStatus(statusEl);
+    resultsEl.style.display = 'block';
+    resultsEl.innerHTML = '<p class="text-muted">Checking which songs are missing from your library...</p>';
+
+    try {
+        const res = await fetch('/api/download/check-missing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            resultsEl.innerHTML = `<div class="status error">❌ Error: ${escHtml(data.error)}</div>`;
+            return;
+        }
+
+        let html = '<div class="card" style="padding:12px;margin-top:8px;background:var(--bg);">';
+        if (data.is_playlist) {
+            html += `<h4>📋 Playlist Analysis</h4>`;
+            html += `<p>Total songs in playlist: <strong>${data.total}</strong></p>`;
+            html += `<p>✅ Already in library: <strong>${data.existing_count}</strong></p>`;
+            html += `<p>⬇️ Need to download: <strong>${data.missing.length}</strong></p>`;
+            
+            if (data.existing_titles && data.existing_titles.length > 0) {
+                html += '<details style="margin-top:8px;">';
+                html += `<summary>Already downloaded (${data.existing_titles.length} songs)</summary>`;
+                html += '<ul style="font-size:12px;max-height:200px;overflow-y:auto;">';
+                data.existing_titles.forEach(t => {
+                    html += `<li>✅ ${escHtml(t)}</li>`;
+                });
+                html += '</ul></details>';
+            }
+            
+            if (data.missing.length > 0) {
+                html += '<details style="margin-top:8px;">';
+                html += `<summary>Songs to download (${data.missing.length} songs)</summary>`;
+                html += '<ul style="font-size:12px;max-height:300px;overflow-y:auto;">';
+                data.missing.forEach(s => {
+                    html += `<li>⬇️ ${escHtml(s.title)}</li>`;
+                });
+                html += '</ul></details>';
+                html += `<p style="margin-top:8px;"><button class="btn btn-primary btn-sm" onclick="downloadOnlyMissing()">⬇️ Download These ${data.missing.length} Songs</button></p>`;
+                // Store missing entries for download
+                window._missingPlaylistEntries = data.missing;
+                window._missingPlaylistUrl = url;
+            }
+        } else {
+            html += `<h4>🎵 Single Song Check</h4>`;
+            if (data.missing.length > 0) {
+                html += `<p>✅ This song is <strong>not</strong> in your library yet.</p>`;
+                html += `<p><button class="btn btn-primary btn-sm" onclick="startDownload()">⬇️ Download It</button></p>`;
+            } else {
+                html += `<p>✅ This song is <strong>already</strong> in your library!</p>`;
+            }
+        }
+        html += '</div>';
+        resultsEl.innerHTML = html;
+    } catch (e) {
+        resultsEl.innerHTML = `<div class="status error">❌ Error: ${escHtml(e.message)}</div>`;
+    }
+}
+
+
+async function downloadOnlyMissing() {
+    if (!window._missingPlaylistEntries || window._missingPlaylistEntries.length === 0) {
+        alert('No missing songs to download. Run "Check Missing" first.');
+        return;
+    }
+    
+    const url = window._missingPlaylistUrl || document.getElementById('downloadUrl').value.trim();
+    if (!url) { alert('No URL'); return; }
+    
+    // Use the standard download but pass the pre-filtered flag
+    // The server-side now filters automatically, but this gives visual feedback
+    document.getElementById('downloadUrl').value = url;
+    showStatus(document.getElementById('downloadStatus'), 
+        `Starting download of ${window._missingPlaylistEntries.length} missing songs...`, 'info');
+    await startDownload();
+}
+
+
 // ── Auto-poll when page loads (so all users see active downloads) ───
 // Also listen for tab visibility to start/stop polling
 document.addEventListener('DOMContentLoaded', () => {

@@ -63,34 +63,57 @@ async function viewPlaylist(id) {
         document.getElementById('shuffleBtn').style.display = 'inline-flex';
         document.getElementById('unshuffleBtn').style.display = data.shuffled && data.original_order ? 'inline-flex' : 'none';
 
-        const songsContainer = document.getElementById('playlistSongs');
-        if (data.songs_info && data.songs_info.length > 0) {
-            let html = '<div class="song-grid">';
-            data.songs_info.forEach((s, idx) => {
-                const thumb = s.has_thumbnail ? `/api/thumbnails/${s.id}.jpg` : null;
-                const playing = DS.currentPlayingId === s.id;
-                const escapedTitle = escHtml(s.title).replace(/'/g, "\\'");
-                html += `<div class="song-card ${playing ? 'playing' : ''}" data-song-id="${s.id}">
-                    <span style="color:var(--text-muted);font-weight:700;width:20px;flex-shrink:0;font-size:12px;">${idx+1}</span>
-                    <div class="song-thumb" onclick="event.stopPropagation();togglePlay('${s.id}','${escapedTitle}')">
-                        ${thumb ? `<img src="${thumb}" loading="lazy">` : '🎵'}
-                        <div class="play-overlay ${playing ? 'playing' : ''}">${playing ? '⏸' : '▶️'}</div>
-                    </div>
-                    <div class="song-info">
-                        <div class="title">${escHtml(s.title)}</div>
-                        <div class="artist">${escHtml(s.artist)}</div>
-                    </div>
-                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removeFromPlaylist('${encodeURIComponent(s.filename)}')">✕</button>
-                </div>`;
-            });
-            html += '</div>';
-            songsContainer.innerHTML = html;
-        } else {
-            songsContainer.innerHTML = '<div class="empty-state"><p>No songs in this playlist yet</p></div>';
-        }
+        renderPlaylistSongs(data.songs_info);
         showPlaylistAddSongs();
         loadArtistsForBatch();
+        // Clear playlist song search when opening
+        document.getElementById('playlistSongSearch').value = '';
     } catch (e) { alert('Error loading playlist'); }
+}
+
+function renderPlaylistSongs(songsInfo) {
+    const container = document.getElementById('playlistSongs');
+    const searchVal = (document.getElementById('playlistSongSearch').value || '').toLowerCase();
+    
+    if (!songsInfo || songsInfo.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No songs in this playlist yet</p></div>';
+        return;
+    }
+
+    let filtered = songsInfo;
+    if (searchVal) {
+        filtered = songsInfo.filter(s => 
+            s.title.toLowerCase().includes(searchVal) || 
+            s.artist.toLowerCase().includes(searchVal)
+        );
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No songs match your search</p></div>';
+        return;
+    }
+
+    let html = `<div class="text-muted" style="font-size:12px;margin-bottom:8px;">${filtered.length} of ${songsInfo.length} songs</div>`;
+    html += '<div class="song-grid playlist-song-grid">';
+    filtered.forEach((s, idx) => {
+        const thumb = s.has_thumbnail ? `/api/thumbnails/${s.id}.jpg` : null;
+        const playing = DS.currentPlayingId === s.id;
+        const escapedTitle = escHtml(s.title).replace(/'/g, "\\'");
+        html += `<div class="song-card ${playing ? 'playing' : ''}" data-song-id="${s.id}">
+            <span style="color:var(--text-muted);font-weight:700;width:20px;flex-shrink:0;font-size:12px;">${idx+1}</span>
+            <div class="song-thumb" onclick="event.stopPropagation();togglePlay('${s.id}','${escapedTitle}')">
+                ${thumb ? `<img src="${thumb}" loading="lazy">` : '🎵'}
+                <div class="play-overlay ${playing ? 'playing' : ''}">${playing ? '⏸' : '▶️'}</div>
+            </div>
+            <div class="song-info">
+                <div class="title">${escHtml(s.title)}</div>
+                <div class="artist">${escHtml(s.artist)}</div>
+            </div>
+            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removeFromPlaylist('${encodeURIComponent(s.filename)}')">✕</button>
+        </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 function backToPlaylists() {
@@ -185,19 +208,45 @@ async function deleteCurrentPlaylist() {
 
 async function loadArtistsForBatch() {
     const select = document.getElementById('batchArtistSelect');
+    const container = document.getElementById('batchArtistCheckboxes');
     try {
         const res = await fetch('/api/artists');
         const artists = await res.json();
+        
+        // Populate single select
         let html = '<option value="">-- Select an artist --</option>';
         artists.forEach(a => {
-			console.log(a);
             const safe = escHtml(a);
             html += `<option value="${safe}">${safe}</option>`;
         });
         select.innerHTML = html;
+
+        // Populate multi-select checkboxes (show first 50, rest expandable)
+        let checkboxHtml = '<div style="max-height:250px;overflow-y:auto;border:1px solid var(--surface2);border-radius:6px;padding:4px;">';
+        artists.forEach((a, idx) => {
+            const safe = escHtml(a);
+            checkboxHtml += `<label class="checkbox-label" style="display:flex;align-items:center;gap:6px;padding:2px 6px;font-size:12px;cursor:pointer;">
+                <input type="checkbox" class="artist-checkbox" value="${safe}">
+                <span>${safe}</span>
+            </label>`;
+        });
+        checkboxHtml += '</div>';
+        checkboxHtml += `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" onclick="selectAllArtists(true)">Select All</button>
+            <button class="btn btn-sm btn-outline" onclick="selectAllArtists(false)">Deselect All</button>
+            <button class="btn btn-sm btn-accent" onclick="batchAddSelectedArtists()">+ Add Selected</button>
+            <button class="btn btn-sm btn-primary" onclick="batchAddAllSongs()">+ Add All Songs</button>
+            <span id="batchMultiStatus" style="font-size:11px;color:var(--text-muted);margin-left:4px;"></span>
+        </div>`;
+        container.innerHTML = checkboxHtml;
     } catch(e) {
         select.innerHTML = '<option value="">Error loading artists</option>';
+        container.innerHTML = '<p class="text-muted">Error loading artists</p>';
     }
+}
+
+function selectAllArtists(select) {
+    document.querySelectorAll('.artist-checkbox').forEach(cb => cb.checked = select);
 }
 
 async function batchAddByArtist() {
@@ -220,6 +269,67 @@ async function batchAddByArtist() {
         const data = await res.json();
         if (data.success) {
             statusEl.textContent = `✅ Added ${data.added} songs by "${artist}"`;
+            viewPlaylist(DS.currentPlaylistId);
+        } else {
+            statusEl.textContent = '❌ Error: ' + (data.error || 'Unknown');
+        }
+    } catch(e) {
+        statusEl.textContent = '❌ Error adding songs';
+    }
+}
+
+async function batchAddSelectedArtists() {
+    if (!DS.currentPlaylistId) return;
+    const checked = document.querySelectorAll('.artist-checkbox:checked');
+    const artists = Array.from(checked).map(cb => cb.value);
+    if (artists.length === 0) { alert('Please select at least one artist'); return; }
+
+    if (!confirm(`Add all songs by ${artists.length} selected artist(s) to this playlist?`)) return;
+
+    const statusEl = document.getElementById('batchMultiStatus');
+    statusEl.textContent = 'Adding songs...';
+
+    try {
+        const res = await fetch(`/api/playlists/${DS.currentPlaylistId}/songs/batch-multi`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artists })
+        });
+        const data = await res.json();
+        if (data.success) {
+            let detail = '';
+            if (data.per_artist) {
+                detail = ' (';
+                const parts = [];
+                for (const [artist, count] of Object.entries(data.per_artist)) {
+                    if (count > 0) parts.push(`${artist}: ${count}`);
+                }
+                detail += parts.join(', ') + ')';
+            }
+            statusEl.textContent = `✅ Added ${data.total_added} songs${detail}`;
+            viewPlaylist(DS.currentPlaylistId);
+        } else {
+            statusEl.textContent = '❌ Error: ' + (data.error || 'Unknown');
+        }
+    } catch(e) {
+        statusEl.textContent = '❌ Error adding songs';
+    }
+}
+
+async function batchAddAllSongs() {
+    if (!DS.currentPlaylistId) return;
+    if (!confirm('Add ALL songs from the library to this playlist?')) return;
+
+    const statusEl = document.getElementById('batchMultiStatus');
+    statusEl.textContent = 'Adding all songs...';
+
+    try {
+        const res = await fetch(`/api/playlists/${DS.currentPlaylistId}/songs/batch-all`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (data.success) {
+            statusEl.textContent = `✅ Added ${data.added} songs to playlist`;
             viewPlaylist(DS.currentPlaylistId);
         } else {
             statusEl.textContent = '❌ Error: ' + (data.error || 'Unknown');

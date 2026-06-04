@@ -101,9 +101,75 @@ def add_song(playlist_id, song_id):
     return False
 
 
+# ── Artist splitting ──────────────────────────────────────────────────
+
+# Regex pattern to split multi-artist strings
+# Matches separators: comma (incl. fullwidth), semicolon, slash, feat., ft.,
+# &, and, with, vs., duet, along with whitespace variants
+_ARTIST_SEP_PATTERN = re.compile(
+    r'\s*(?:'
+    r'[,，;；/]'                    # Commas (both ASCII and fullwidth), semicolons, slashes
+    r'|feat\.|ft\.|featuring'      # feat/ft variations
+    r'|&'                          # ampersand
+    r'|\band\b'
+    r'|\bwith\b'
+    r'|\bvs\.?\b'
+    r'|\bduet\b'
+    r'|\bduet with\b'
+    r'|\(feat\.[^)]*\)'            # (feat. ...) patterns
+    r'|\(with[^)]*\)'              # (with ...) patterns
+    r'|\(ft\.[^)]*\)'              # (ft. ...) patterns
+    r')\s*',
+    re.IGNORECASE
+)
+
+
+def _split_artists(artist_string):
+    """
+    Parse an artist string into individual base artists.
+    Handles various separators and Unicode characters.
+    Returns a set of cleaned artist names.
+    """
+    if not artist_string:
+        return set()
+    # First, strip common parenthetical suffixes like (feat. Artist) that might remain
+    cleaned = re.sub(r'\([^)]*\)', '', artist_string).strip()
+    if not cleaned:
+        return set()
+    # Split using the regex pattern
+    parts = _ARTIST_SEP_PATTERN.split(cleaned)
+    result = set()
+    for part in parts:
+        p = part.strip().strip('"\'')
+        # Skip empty parts or parts that look like remnants of separators
+        if p and len(p) > 1 and not p.startswith('('):
+            result.add(p)
+    return result
+
+
+def get_artists():
+    """Return a sorted list of unique base artist names from all MP3 files.
+    For songs with multiple artists (e.g. "Artist A, Artist B"), each individual
+    artist is returned separately so the user sees only the base artists."""
+    artists = set()
+    for f in MUSIC_DIR.glob("*.mp3"):
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(f)
+            artist_str = str(audio.tags.get("TPE1", "")).strip() if audio.tags else ""
+            if artist_str:
+                individual_artists = _split_artists(artist_str)
+                artists.update(individual_artists)
+        except Exception:
+            pass
+    return sorted(artists, key=lambda x: x.lower())
+
+
 def add_songs_by_artist(playlist_id, artist_name):
     """
     Add all songs matching an artist name to a playlist.
+    Matches if the selected base artist appears anywhere in a song's artist metadata,
+    even if the song has multiple artists.
     Returns the count of songs added.
     """
     playlist = get_playlist(playlist_id)
@@ -125,12 +191,104 @@ def add_songs_by_artist(playlist_id, artist_name):
         except Exception:
             artist = ""
 
-        # Also check filename for artist prefix (e.g. "Artist - Title.mp3")
-        name_artist = ""
-        if " - " in f.stem:
-            name_artist = f.stem.split(" - ", 1)[0].lower()
+        # Check if the selected artist appears in the song's individual artist list
+        individual_artists = _split_artists(artist)
+        if artist_lower in [a.lower() for a in individual_artists]:
+            playlist["songs"].append(f.name)
+            existing.add(f.name)
+            added += 1
+        else:
+            # Also check filename for artist prefix (e.g. "Artist - Title.mp3")
+            name_artist = ""
+            if " - " in f.stem:
+                name_artist = f.stem.split(" - ", 1)[0].lower()
+            if artist_lower in name_artist:
+                playlist["songs"].append(f.name)
+                existing.add(f.name)
+                added += 1
 
-        if artist_lower in artist or artist_lower in name_artist:
+    if added > 0:
+        save_playlist(playlist_id, playlist)
+
+    return added
+
+
+def add_songs_by_artists_batch(playlist_id, artist_names):
+    """
+    Add all songs matching ANY of the given artist names to a playlist.
+    artist_names: list of artist name strings.
+    Returns dict with counts per artist and total added.
+    """
+    playlist = get_playlist(playlist_id)
+    if not playlist:
+        return {"error": "Playlist not found", "total_added": 0, "per_artist": {}}
+
+    if not artist_names:
+        return {"error": "No artists provided", "total_added": 0, "per_artist": {}}
+
+    # Normalize all artist names to lowercase for matching
+    artist_lower_set = set(a.strip().lower() for a in artist_names if a.strip())
+    existing = set(playlist["songs"])
+    per_artist = {a: 0 for a in artist_names}
+    total_added = 0
+
+    for f in MUSIC_DIR.glob("*.mp3"):
+        if f.name in existing:
+            continue
+        # Check artist via ID3 tags
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(f)
+            artist = str(audio.tags.get("TPE1", "")).lower() if audio.tags else ""
+        except Exception:
+            artist = ""
+
+        # Check if ANY of the selected artists appear in the song's artist list
+        individual_artists = _split_artists(artist)
+        individual_lower = [a.lower() for a in individual_artists]
+
+        matched = False
+        for a_lower, a_orig in zip(
+            [a.lower() for a in artist_names if a.strip()],
+            [a for a in artist_names if a.strip()]
+        ):
+            if a_lower in individual_lower:
+                per_artist[a_orig] = per_artist.get(a_orig, 0) + 1
+                matched = True
+            else:
+                # Also check filename
+                name_artist = ""
+                if " - " in f.stem:
+                    name_artist = f.stem.split(" - ", 1)[0].lower()
+                if a_lower in name_artist:
+                    per_artist[a_orig] = per_artist.get(a_orig, 0) + 1
+                    matched = True
+
+        if matched:
+            playlist["songs"].append(f.name)
+            existing.add(f.name)
+            total_added += 1
+
+    if total_added > 0:
+        save_playlist(playlist_id, playlist)
+
+    return {"total_added": total_added, "per_artist": per_artist}
+
+
+def add_all_artists(playlist_id):
+    """
+    Add ALL songs that are not already in the playlist.
+    Returns the count of songs added.
+    """
+    playlist = get_playlist(playlist_id)
+    if not playlist:
+        return 0
+
+    added = 0
+    existing = set(playlist["songs"])
+
+    for f in MUSIC_DIR.glob("*.mp3"):
+        if f.name not in existing:
             playlist["songs"].append(f.name)
             existing.add(f.name)
             added += 1
@@ -139,21 +297,6 @@ def add_songs_by_artist(playlist_id, artist_name):
         save_playlist(playlist_id, playlist)
 
     return added
-
-
-def get_artists():
-    """Return a sorted list of unique artist names from all MP3 files."""
-    artists = set()
-    for f in MUSIC_DIR.glob("*.mp3"):
-        try:
-            from mutagen.mp3 import MP3
-            audio = MP3(f)
-            artist = str(audio.tags.get("TPE1", "")).strip() if audio.tags else ""
-            if artist:
-                artists.add(artist)
-        except Exception:
-            pass
-    return sorted(artists)
 
 
 def remove_song(playlist_id, song_filename):

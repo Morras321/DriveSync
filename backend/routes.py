@@ -11,7 +11,7 @@ from flask import Blueprint, request, jsonify, send_from_directory, send_file, R
 
 from config import MUSIC_DIR, THUMBNAIL_DIR, FRONTEND_DIR, download_progress
 from library import get_all_songs, get_song_info, import_file, delete_song
-from youtube import start_download, cancel_download
+from youtube import start_download, cancel_download, check_missing_songs
 from playlist import (
     get_all_playlists,
     get_playlist_with_info,
@@ -19,6 +19,8 @@ from playlist import (
     delete_playlist,
     add_song,
     add_songs_by_artist,
+    add_songs_by_artists_batch,
+    add_all_artists,
     get_artists,
     remove_song,
     shuffle_playlist,
@@ -145,6 +147,17 @@ def download_cancel():
     return jsonify({"success": True, "message": "Cancelling…"})
 
 
+@api.route("/api/download/check-missing", methods=["POST"])
+def check_missing_route():
+    """Check which songs from a URL are not yet in the library (no download)."""
+    data = request.json or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+    result = check_missing_songs(url)
+    return jsonify(result)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  File Import
 # ═══════════════════════════════════════════════════════════════════════
@@ -235,6 +248,24 @@ def add_songs_batch_route(playlist_id):
     if not artist:
         return jsonify({"error": "Artist name required"}), 400
     count = add_songs_by_artist(playlist_id, artist)
+    return jsonify({"success": True, "added": count})
+
+
+@api.route("/api/playlists/<playlist_id>/songs/batch-multi", methods=["POST"])
+def add_songs_batch_multi_route(playlist_id):
+    """Batch-add songs by multiple artists at once."""
+    data = request.json or {}
+    artists = data.get("artists", [])
+    if not artists:
+        return jsonify({"error": "Artists list required"}), 400
+    result = add_songs_by_artists_batch(playlist_id, artists)
+    return jsonify({"success": True, **result})
+
+
+@api.route("/api/playlists/<playlist_id>/songs/batch-all", methods=["POST"])
+def add_all_songs_route(playlist_id):
+    """Add ALL songs from library to a playlist at once."""
+    count = add_all_artists(playlist_id)
     return jsonify({"success": True, "added": count})
 
 

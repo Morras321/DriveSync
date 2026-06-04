@@ -57,11 +57,13 @@
                     <label>YouTube URL</label>
                     <input type="url" id="downloadUrl" placeholder="https://www.youtube.com/watch?v=... or playlist URL">
                 </div>
-                <div style="display:flex;gap:8px;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <button class="btn btn-primary" style="flex:1;" onclick="startDownload()">⬇️ Download</button>
+                    <button class="btn btn-accent" onclick="checkMissingSongs()">🔍 Check Missing</button>
                     <button class="btn btn-warning" id="cancelDownloadBtn" style="display:none;" onclick="cancelDownload()">✕ Cancel</button>
                 </div>
                 <div id="downloadStatus" class="status mt-10"></div>
+                <div id="checkMissingResults" class="mt-10" style="display:none;"></div>
                 <div id="progressContainer" style="display:none;" class="mt-10">
                     <div id="playlistProgressSection">
                         <div class="flex-between">
@@ -147,15 +149,21 @@
                 <div id="playlistAddSongs"></div>
                 <div class="batch-add-section" style="margin: 12px 0; padding: 12px; background: var(--bg); border-radius: 8px;">
                     <label style="font-size:12px;color:var(--text-muted);font-weight:600;display:block;margin-bottom:6px;">📦 Batch Add by Artist</label>
-                    <div style="display:flex;gap:8px;">
+                    <div style="display:flex;gap:8px;margin-bottom:8px;">
                         <select id="batchArtistSelect" style="flex:1;">
                             <option value="">-- Select an artist --</option>
                         </select>
-                        <button class="btn btn-accent btn-sm" onclick="batchAddByArtist()">+ Add All</button>
+                        <button class="btn btn-accent btn-sm" onclick="batchAddByArtist()">+ Add Single</button>
                     </div>
-                    <div id="batchStatus" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
+                    <div id="batchStatus" style="font-size:11px;color:var(--text-muted);margin-top:2px;margin-bottom:8px;"></div>
+                    <hr style="border-color:var(--surface2);margin:8px 0;">
+                    <label style="font-size:12px;color:var(--text-muted);font-weight:600;display:block;margin-bottom:6px;">🎯 Multi-Artist Selection</label>
+                    <div id="batchArtistCheckboxes"></div>
                 </div>
                 <h3 class="mt-16">Playlist Songs</h3>
+                <div class="search-bar" style="max-width:100%;margin-bottom:8px;">
+                    <input type="search" id="playlistSongSearch" placeholder="Search songs in this playlist..." oninput="if(DS.currentPlaylistId) viewPlaylist(DS.currentPlaylistId)">
+                </div>
                 <div id="playlistSongs"></div>
             </div>
         </div>
