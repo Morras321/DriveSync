@@ -86,8 +86,8 @@ $ErrorActionPreference = "Continue"
 & $VenvPython -m pip install --upgrade pip > $null 2>&1
 $ErrorActionPreference = $OldPreference
 
-Write-Host "  Installing flask, yt-dlp, mutagen, pillow, requests..."
-& $VenvPip install flask flask-cors yt-dlp mutagen pillow requests 2>&1
+Write-Host "  Installing flask, yt-dlp, mutagen, pillow, requests, langid..."
+& $VenvPip install flask flask-cors yt-dlp mutagen pillow requests langid 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Package installation failed" -ForegroundColor Red
     Write-Host "Try manually: $VenvPip install -r requirements.txt"

@@ -143,8 +143,14 @@
                     </div>
                 </div>
                 <h3>Add Songs</h3>
-                <div class="search-bar" style="max-width:100%;margin-bottom:8px;">
-                    <input type="search" id="playlistSearch" placeholder="Search songs..." oninput="showPlaylistAddSongs()">
+                <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+                    <div class="search-bar" style="flex:1;min-width:150px;">
+                        <input type="search" id="playlistSearch" placeholder="Search songs..." oninput="showPlaylistAddSongs()">
+                    </div>
+                    <select id="playlistLanguageFilter" style="flex:0 0 auto;min-width:120px;" onchange="showPlaylistAddSongs()">
+                        <option value="all">🌐 All Languages</option>
+                    </select>
+                    <button class="btn btn-outline btn-sm" onclick="loadLanguageFilter()" title="Scan songs to detect languages">🔍 Detect Languages</button>
                 </div>
                 <div id="playlistAddSongs"></div>
                 <div class="batch-add-section" style="margin: 12px 0; padding: 12px; background: var(--bg); border-radius: 8px;">

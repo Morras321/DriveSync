@@ -122,7 +122,7 @@ source venv/bin/activate
 pip install --upgrade pip
 
 # Install core dependencies
-pip install flask flask-cors yt-dlp mutagen pillow requests
+pip install flask flask-cors yt-dlp mutagen pillow requests langid
 
 # Install ffmpeg-python for cross-platform support
 pip install ffmpeg-python

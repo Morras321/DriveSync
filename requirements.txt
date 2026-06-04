@@ -7,3 +7,5 @@ yt-dlp>=2023.0.0
 mutagen>=1.46.0
 Pillow>=9.0.0
 requests>=2.27.0
+langid>=1.1.6
+numpy>=1.21.0

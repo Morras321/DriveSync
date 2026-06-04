@@ -127,9 +127,12 @@ async function showPlaylistAddSongs() {
     if (!DS.currentPlaylistId) return;
     const container = document.getElementById('playlistAddSongs');
     const search = document.getElementById('playlistSearch').value;
+    const language = document.getElementById('playlistLanguageFilter').value;
 
     try {
-        const url = search ? `/api/songs?search=${encodeURIComponent(search)}` : '/api/songs';
+        let url = '/api/songs?';
+        if (search) url += `search=${encodeURIComponent(search)}&`;
+        if (language && language !== 'all') url += `language=${encodeURIComponent(language)}&`;
         const res = await fetch(url);
         const songs = await res.json();
         const plRes = await fetch(`/api/playlists/${DS.currentPlaylistId}`);
@@ -139,14 +142,30 @@ async function showPlaylistAddSongs() {
 
         if (available.length === 0) { container.innerHTML = '<p class="text-muted">No more songs to add</p>'; return; }
 
-        let html = '<div class="song-grid scrollable-songs">';
+        // Show language info badge
+        let langCounts = {};
+        available.forEach(s => {
+            const lang = s.language || 'en';
+            langCounts[lang] = (langCounts[lang] || 0) + 1;
+        });
+        let langBadge = '<div class="text-muted" style="font-size:11px;margin-bottom:6px;">';
+        for (const [code, count] of Object.entries(langCounts)) {
+            langBadge += `<span style="margin-right:8px;">${_getLangFlag(code)} ${code.toUpperCase()}: ${count}</span>`;
+        }
+        langBadge += ` | ${available.length} songs available</div>`;
+
+        let html = langBadge;
+        html += '<div class="song-grid scrollable-songs">';
         available.forEach(s => {
             const thumb = s.has_thumbnail ? `/api/thumbnails/${s.id}.jpg` : null;
+            const lang = s.language || 'en';
+            const langEmoji = _getLangFlag(lang);
+            const langName = _getLangName(lang);
             html += `<div class="song-card" onclick="addToCurrentPlaylist('${s.id}')">
                 <div class="song-thumb">${thumb ? `<img src="${thumb}" loading="lazy">` : '🎵'}</div>
                 <div class="song-info">
                     <div class="title">${escHtml(s.title)}</div>
-                    <div class="artist">${escHtml(s.artist)}</div>
+                    <div class="artist">${escHtml(s.artist)} <span class="lang-badge" onclick="event.stopPropagation();editSongLanguage('${s.id}', event)" title="Click to change language (current: ${langName})" style="font-size:10px;color:var(--text-muted);margin-left:4px;cursor:pointer;border-bottom:1px dashed var(--text-muted);">${langEmoji} ${lang.toUpperCase()}</span></div>
                 </div>
                 <span style="color:var(--success);font-size:18px;flex-shrink:0;">+</span>
             </div>`;
@@ -154,6 +173,97 @@ async function showPlaylistAddSongs() {
         html += '</div>';
         container.innerHTML = html;
     } catch(e) {}
+}
+
+// Language flag emoji mapper for common languages
+function _getLangFlag(code) {
+    const flags = {
+        'en': '🇬🇧', 'af': '🇿🇦', 'ko': '🇰🇷', 'ja': '🇯🇵', 'zh': '🇨🇳',
+        'es': '🇪🇸', 'fr': '🇫🇷', 'de': '🇩🇪', 'pt': '🇧🇷', 'ru': '🇷🇺',
+        'it': '🇮🇹', 'nl': '🇳🇱', 'pl': '🇵🇱', 'ar': '🇸🇦', 'tr': '🇹🇷',
+        'sv': '🇸🇪', 'da': '🇩🇰', 'no': '🇳🇴', 'fi': '🇫🇮', 'hi': '🇮🇳',
+        'th': '🇹🇭', 'vi': '🇻🇳', 'id': '🇮🇩', 'ms': '🇲🇾', 'he': '🇮🇱',
+        'el': '🇬🇷', 'hu': '🇭🇺', 'cs': '🇨🇿', 'sk': '🇸🇰', 'ro': '🇷🇴',
+    };
+    return flags[code] || '🌐';
+}
+
+function _getLangName(code) {
+    const names = {
+        'en': 'English', 'af': 'Afrikaans', 'ko': 'Korean', 'ja': 'Japanese', 'zh': 'Chinese',
+        'es': 'Spanish', 'fr': 'French', 'de': 'German', 'pt': 'Portuguese', 'ru': 'Russian',
+        'it': 'Italian', 'nl': 'Dutch', 'pl': 'Polish', 'ar': 'Arabic', 'tr': 'Turkish',
+        'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian', 'fi': 'Finnish', 'hi': 'Hindi',
+        'th': 'Thai', 'vi': 'Vietnamese', 'id': 'Indonesian', 'ms': 'Malay', 'he': 'Hebrew',
+        'el': 'Greek', 'hu': 'Hungarian', 'cs': 'Czech', 'sk': 'Slovak', 'ro': 'Romanian',
+    };
+    return names[code] || code.toUpperCase();
+}
+
+async function editSongLanguage(songId, event) {
+    event.stopPropagation();
+    const currentLang = prompt('Enter the 2-letter language code for this song (e.g.: en, af, ko, ja):', '');
+    if (!currentLang) return;
+    
+    const lang = currentLang.trim().toLowerCase();
+    if (lang.length !== 2) {
+        alert('Please enter a valid 2-letter language code (e.g.: en, af, ko)');
+        return;
+    }
+    
+    if (!confirm(`Change language of this song to "${_getLangName(lang)}" (${lang})?`)) return;
+    
+    try {
+        const res = await fetch(`/api/songs/${songId}/language`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ language: lang })
+        });
+        const data = await res.json();
+        if (data.success) {
+            // Refresh the song list
+            showPlaylistAddSongs();
+            // Also refresh the language filter options
+            loadLanguageFilter();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to set language'));
+        }
+    } catch(e) {
+        alert('Error updating language');
+    }
+}
+
+async function loadLanguageFilter() {
+    const select = document.getElementById('playlistLanguageFilter');
+    const detectBtn = document.querySelector('.btn-outline[onclick*="loadLanguageFilter"]');
+    
+    try {
+        // First check if languages are already cached
+        let res = await fetch('/api/languages');
+        let languages = await res.json();
+        
+        if (!languages || languages.length === 0) {
+            // No cache yet, trigger a scan
+            if (detectBtn) detectBtn.textContent = '⏳ Scanning...';
+            await fetch('/api/languages/scan', { method: 'POST' });
+            res = await fetch('/api/languages');
+            languages = await res.json();
+        }
+        
+        let html = '<option value="all">🌐 All Languages</option>';
+        languages.forEach(l => {
+            const flag = _getLangFlag(l.code);
+            html += `<option value="${l.code}">${flag} ${l.name}</option>`;
+        });
+        select.innerHTML = html;
+        if (detectBtn) detectBtn.textContent = '✅ Languages Detected';
+        
+        // Refresh the song list with the new filter
+        showPlaylistAddSongs();
+    } catch(e) {
+        if (detectBtn) detectBtn.textContent = '❌ Scan Failed';
+        select.innerHTML = '<option value="all">🌐 All Languages</option>';
+    }
 }
 
 async function addToCurrentPlaylist(songId) {

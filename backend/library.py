@@ -13,6 +13,7 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, TIT2, TPE1
 
 from config import MUSIC_DIR, THUMBNAIL_DIR, VALID_AUDIO_EXTENSIONS, get_all_music_dirs
+from languages import get_song_language_from_file, load_language_cache
 
 # Cache of which dir a song_id belongs to
 _song_location_cache = {}
@@ -48,12 +49,24 @@ def _rebuild_cache():
 
 # ── Query ──────────────────────────────────────────────────────────────
 
-def get_all_songs():
+def get_all_songs(language_filter=None):
     """Return a list of song-info dicts for every MP3 across all music dirs.
-    Uses caching for fast repeated access (e.g. when searching)."""
+    Uses caching for fast repeated access (e.g. when searching).
+    
+    Args:
+        language_filter: optional language code (e.g. 'ko', 'ja') to filter by.
+                         'all' or None returns all songs.
+    """
     _rebuild_cache()
     songs = []
     seen = set()
+    
+    # If filtering by language, get the set of matching song IDs
+    lang_filtered_ids = None
+    if language_filter and language_filter != 'all':
+        from languages import get_songs_by_language
+        lang_filtered_ids = get_songs_by_language(language_filter)
+    
     for d in get_all_music_dirs():
         if not d.exists():
             continue
@@ -62,9 +75,18 @@ def get_all_songs():
             if resolved in seen:
                 continue
             seen.add(resolved)
+            
+            # Apply language filter
+            if lang_filtered_ids is not None and f.stem not in lang_filtered_ids:
+                continue
+            
             # Use cached info if available
             if resolved in _song_info_cache:
                 info = _song_info_cache[resolved]
+                # Make sure language is cached (it's fast from the JSON lookup)
+                if info and 'language' not in info:
+                    info['language'] = get_song_language_from_file(f)
+                    _song_info_cache[resolved] = info
             else:
                 info = get_song_info(f)
                 if info:
@@ -75,7 +97,7 @@ def get_all_songs():
 
 
 def get_song_info(filepath):
-    """Read ID3 metadata from an MP3 file and return a dict."""
+    """Read ID3 metadata from an MP3 file and return a dict with language detection."""
     try:
         audio = MP3(filepath)
         tags = audio.tags
@@ -98,6 +120,9 @@ def get_song_info(filepath):
                     has_thumb = True
                     break
 
+        # Get language from ID3 TLAN tag (or cache fallback)
+        language = get_song_language_from_file(filepath)
+
         return {
             "id": filepath.stem,
             "filename": filepath.name,
@@ -109,6 +134,7 @@ def get_song_info(filepath):
             "size": filepath.stat().st_size,
             "has_thumbnail": has_thumb,
             "filepath": str(filepath),
+            "language": language,
         }
     except Exception as exc:
         print(f"Error reading {filepath}: {exc}")
@@ -123,6 +149,7 @@ def get_song_info(filepath):
             "size": filepath.stat().st_size,
             "has_thumbnail": False,
             "filepath": str(filepath),
+            "language": "en",
         }
 
 

@@ -10,7 +10,8 @@ from pathlib import Path
 from flask import Blueprint, request, jsonify, send_from_directory, send_file, Response, stream_with_context
 
 from config import MUSIC_DIR, THUMBNAIL_DIR, FRONTEND_DIR, download_progress
-from library import get_all_songs, get_song_info, import_file, delete_song
+from library import get_all_songs, get_song_info, import_file, delete_song, find_song_by_id
+from languages import scan_and_cache_languages, get_available_languages, set_song_language, LANGUAGE_NAMES
 from youtube import start_download, cancel_download, check_missing_songs
 from playlist import (
     get_all_playlists,
@@ -41,7 +42,9 @@ api = Blueprint("api", __name__)
 @api.route("/api/songs")
 def list_songs():
     search = request.args.get("search", "").lower()
-    songs = get_all_songs()
+    language = request.args.get("language", "all")
+    
+    songs = get_all_songs(language_filter=language)
     if search:
         songs = [s for s in songs
                  if search in s["title"].lower() or search in s["artist"].lower()]
@@ -295,6 +298,39 @@ def reorder_route(playlist_id):
 # ═══════════════════════════════════════════════════════════════════════
 #  SD Card
 # ═══════════════════════════════════════════════════════════════════════
+
+@api.route("/api/languages")
+def list_languages():
+    """Return available languages in the library."""
+    return jsonify(get_available_languages())
+
+
+@api.route("/api/languages/scan", methods=["POST"])
+def scan_languages():
+    """Scan all songs and detect their language (one-time operation)."""
+    result = scan_and_cache_languages()
+    return jsonify({"success": True, "detected": len(result)})
+
+
+@api.route("/api/songs/<song_id>/language", methods=["POST"])
+def set_song_language_route(song_id):
+    """Manually set/override the language for a song."""
+    data = request.json or {}
+    language = data.get("language", "").strip().lower()
+    if not language:
+        return jsonify({"error": "Language code required"}), 400
+    if language not in LANGUAGE_NAMES and len(language) != 2:
+        return jsonify({"error": f"Invalid language code: {language}"}), 400
+    
+    path = find_song_by_id(song_id)
+    if not path:
+        return jsonify({"error": "Song not found"}), 404
+    
+    ok = set_song_language(path, language)
+    if ok:
+        return jsonify({"success": True, "language": language})
+    return jsonify({"error": "Failed to set language tag"}), 500
+
 
 @api.route("/api/storage")
 def storage_info():
