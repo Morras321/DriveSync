@@ -25,6 +25,7 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB, TYER
 
 from config import MUSIC_DIR, THUMBNAIL_DIR, download_progress, IS_WINDOWS
+from languages import detect_and_set_language_from_metadata
 
 # ---------------------------
 # Cancel Support
@@ -325,6 +326,11 @@ def _download_single_video_task(video_url, temp_dir, song_index=1, total_songs=1
 
     shutil.copy2(str(src), str(dest))
     enhance_metadata(dest, info)
+    
+    # Detect and set language using title and artist from YouTube metadata
+    artist = str(info.get("artist") or info.get("channel") or info.get("uploader") or "Unknown Artist")
+    detect_and_set_language_from_metadata(dest, title, artist)
+    
     return {"success": True, "filename": dest.name, "title": title}
 
 

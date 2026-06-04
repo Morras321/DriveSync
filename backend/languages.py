@@ -10,7 +10,7 @@ from pathlib import Path
 
 from config import MUSIC_DIR
 from mutagen.mp3 import MP3
-from mutagen.id3 import TLAN
+from mutagen.id3 import TLAN, TIT2, TPE1
 
 # Cache file path (stored in music dir alongside thumbnails) - fallback when TLAN not set
 LANGUAGE_CACHE_FILE = MUSIC_DIR / ".language_cache.json"
@@ -131,11 +131,40 @@ def set_song_language(filepath, lang_code):
     return success
 
 
-def detect_language(title):
+def detect_and_set_language_from_metadata(filepath, title=None, artist=None):
     """
-    Detect the language of a song title.
+    Detect language from song metadata (title + artist) and set it in ID3 TLAN tag.
+    If title/artist not provided, reads them from the file's ID3 tags.
+    Returns the detected language code.
+    """
+    # Read title and artist from ID3 if not provided
+    if not title or not artist:
+        try:
+            audio = MP3(filepath)
+            if audio.tags:
+                title = title or str(audio.tags.get("TIT2", "Unknown Title"))
+                artist = artist or str(audio.tags.get("TPE1", "Unknown Artist"))
+        except Exception:
+            pass
+    
+    # Detect language using both title and artist
+    lang_code = detect_language(title, artist)
+    
+    # Set the detected language in ID3
+    set_song_language(filepath, lang_code)
+    
+    return lang_code
+
+
+def detect_language(title, artist=None):
+    """
+    Detect the language of a song title, optionally using artist name for better detection.
     Returns a language code string (e.g. 'en', 'af', 'ko').
     Falls back to 'en' if detection fails.
+    
+    Args:
+        title: Song title to detect language from
+        artist: Optional artist name to combine with title for better detection
     """
     if not title or title == "Unknown Title":
         return 'en'
@@ -146,7 +175,12 @@ def detect_language(title):
 
     try:
         import langid
-        lang, conf = langid.classify(title)
+        # Combine title and artist for more text to analyze if artist is provided
+        text_to_analyze = title
+        if artist and artist != "Unknown Artist":
+            text_to_analyze = f"{title} {artist}"
+        
+        lang, conf = langid.classify(text_to_analyze)
         if conf > 0.3:
             return lang
         return 'en'
