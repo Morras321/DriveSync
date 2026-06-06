@@ -7,6 +7,11 @@ function escHtml(str) {
     return d.innerHTML;
 }
 
+/** Escape a string for use in an HTML attribute (inside double quotes) */
+function escAttr(str) {
+    return (str || '').replace(/&/g, '\x26amp;').replace(/"/g, '\x26quot;').replace(/'/g, '\x26#39;').replace(/</g, '\x26lt;').replace(/>/g, '\x26gt;');
+}
+
 /** Show a status message in an element */
 function showStatus(el, msg, type) {
     el.textContent = msg;

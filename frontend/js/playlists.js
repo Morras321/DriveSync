@@ -13,7 +13,7 @@ async function loadPlaylists() {
         playlists.forEach(p => {
             const shuff = p.shuffled ? '🔀 ' : '';
             const created = p.created ? p.created.slice(0, 10) : '';
-            html += `<div class="playlist-card" onclick="viewPlaylist('${p.id}')">
+            html += `<div class="playlist-card" data-playlist-id="${p.id}">
                 <div class="icon">${shuff}📁</div>
                 <div class="name">${escHtml(p.name)}</div>
                 <div class="count">${p.song_count} songs${created ? ' · ' + created : ''}</div>
@@ -94,14 +94,13 @@ function renderPlaylistSongs(songsInfo) {
     }
 
     let html = `<div class="text-muted" style="font-size:12px;margin-bottom:8px;">${filtered.length} of ${songsInfo.length} songs</div>`;
-    html += '<div class="song-grid playlist-song-grid">';
+    html += '<div class="song-grid playlist-song-grid" id="playlistSongGrid">';
     filtered.forEach((s, idx) => {
         const thumb = s.has_thumbnail ? `/api/thumbnails/${s.id}.jpg` : null;
         const playing = DS.currentPlayingId === s.id;
-        const escapedTitle = escHtml(s.title).replace(/'/g, "\\'");
         html += `<div class="song-card ${playing ? 'playing' : ''}" data-song-id="${s.id}">
             <span style="color:var(--text-muted);font-weight:700;width:20px;flex-shrink:0;font-size:12px;">${idx+1}</span>
-            <div class="song-thumb" onclick="event.stopPropagation();togglePlay('${s.id}','${escapedTitle}')">
+            <div class="song-thumb" data-song-id="${s.id}" data-song-title="${escAttr(s.title)}">
                 ${thumb ? `<img src="${thumb}" loading="lazy">` : '🎵'}
                 <div class="play-overlay ${playing ? 'playing' : ''}">${playing ? '⏸' : '▶️'}</div>
             </div>
@@ -109,7 +108,7 @@ function renderPlaylistSongs(songsInfo) {
                 <div class="title">${escHtml(s.title)}</div>
                 <div class="artist">${escHtml(s.artist)}</div>
             </div>
-            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removeFromPlaylist('${encodeURIComponent(s.filename)}')">✕</button>
+            <button class="btn btn-danger btn-sm" data-action="removefromplaylist" data-filename="${encodeURIComponent(s.filename)}">✕</button>
         </div>`;
     });
     html += '</div>';
@@ -155,17 +154,17 @@ async function showPlaylistAddSongs() {
         langBadge += ` | ${available.length} songs available</div>`;
 
         let html = langBadge;
-        html += '<div class="song-grid scrollable-songs">';
+        html += '<div class="song-grid scrollable-songs" id="playlistAddSongGrid">';
         available.forEach(s => {
             const thumb = s.has_thumbnail ? `/api/thumbnails/${s.id}.jpg` : null;
             const lang = s.language || 'en';
             const langEmoji = _getLangFlag(lang);
             const langName = _getLangName(lang);
-            html += `<div class="song-card" onclick="addToCurrentPlaylist('${s.id}')">
+            html += `<div class="song-card" data-action="addtoplaylist" data-song-id="${s.id}">
                 <div class="song-thumb">${thumb ? `<img src="${thumb}" loading="lazy">` : '🎵'}</div>
                 <div class="song-info">
                     <div class="title">${escHtml(s.title)}</div>
-                    <div class="artist">${escHtml(s.artist)} <span class="lang-badge" onclick="event.stopPropagation();editSongLanguage('${s.id}', event)" title="Click to change language (current: ${langName})" style="font-size:10px;color:var(--text-muted);margin-left:4px;cursor:pointer;border-bottom:1px dashed var(--text-muted);">${langEmoji} ${lang.toUpperCase()}</span></div>
+                    <div class="artist">${escHtml(s.artist)} <span class="lang-badge" data-action="editlanguage" data-song-id="${s.id}" data-lang-name="${escAttr(langName)}" title="Click to change language (current: ${langName})" style="font-size:10px;color:var(--text-muted);margin-left:4px;cursor:pointer;border-bottom:1px dashed var(--text-muted);">${langEmoji} ${lang.toUpperCase()}</span></div>
                 </div>
                 <span style="color:var(--success);font-size:18px;flex-shrink:0;">+</span>
             </div>`;
@@ -448,3 +447,66 @@ async function batchAddAllSongs() {
         statusEl.textContent = '❌ Error adding songs';
     }
 }
+
+// ===== Event delegation for playlist interactions =====
+
+// Playlist card clicks
+document.addEventListener('click', function(e) {
+    const grid = document.querySelector('.playlist-grid');
+    if (grid && grid.contains(e.target)) {
+        const card = e.target.closest('.playlist-card');
+        if (card && card.dataset.playlistId) {
+            viewPlaylist(card.dataset.playlistId);
+            return;
+        }
+    }
+});
+
+// Playlist detail song grid: play songs & remove songs
+document.addEventListener('click', function(e) {
+    const grid = document.getElementById('playlistSongGrid');
+    if (!grid || !grid.contains(e.target)) return;
+
+    // Play button / song thumb click
+    const thumb = e.target.closest('.song-thumb');
+    if (thumb) {
+        e.stopPropagation();
+        const id = thumb.dataset.songId;
+        const title = thumb.dataset.songTitle;
+        if (id && title) togglePlay(id, title);
+        return;
+    }
+
+    // Remove from playlist button
+    const rmBtn = e.target.closest('[data-action="removefromplaylist"]');
+    if (rmBtn) {
+        e.stopPropagation();
+        const filename = rmBtn.dataset.filename;
+        if (filename) removeFromPlaylist(filename);
+        return;
+    }
+});
+
+// Playlist add-song grid: add songs & edit language
+document.addEventListener('click', function(e) {
+    const grid = document.getElementById('playlistAddSongGrid');
+    if (!grid || !grid.contains(e.target)) return;
+
+    // Add to playlist card click
+    const card = e.target.closest('[data-action="addtoplaylist"]');
+    if (card) {
+        e.stopPropagation();
+        const id = card.dataset.songId;
+        if (id) addToCurrentPlaylist(id);
+        return;
+    }
+
+    // Edit language badge click
+    const langBadge = e.target.closest('[data-action="editlanguage"]');
+    if (langBadge) {
+        e.stopPropagation();
+        const id = langBadge.dataset.songId;
+        if (id) editSongLanguage(id, e);
+        return;
+    }
+});

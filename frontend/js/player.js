@@ -4,8 +4,14 @@
 function togglePlay(id, title) {
     if (DS.currentAudio && DS.currentPlayingId === id) {
         if (DS.currentAudio.paused) {
+            document.querySelectorAll(`[data-song-id="${id}"] .play-overlay`).forEach(el => {
+                el.textContent = '⏸';
+            });
             DS.currentAudio.play();
         } else {
+            document.querySelectorAll(`[data-song-id="${id}"] .play-overlay`).forEach(el => {
+                el.textContent = '▶';
+            });
             DS.currentAudio.pause();
         }
         return;
@@ -21,6 +27,7 @@ function togglePlay(id, title) {
     audioEl.src = url;
     audioEl.play().catch(() => {});
     audioEl.onended = () => stopAudio();
+    DS.currentAudio = audioEl;
 
     // Highlight the playing card
     document.querySelectorAll('.song-card.playing, .play-overlay.playing').forEach(el => el.classList.remove('playing'));
