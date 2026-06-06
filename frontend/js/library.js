@@ -33,6 +33,7 @@ async function loadLibrary() {
                         <div class="meta">${dur} · ${size}</div>
                     </div>
                     <div class="song-actions">
+                        <button class="btn btn-accent btn-sm" data-action="addtoqueue" data-song-id="${s.id}" title="Add to queue">🎧</button>
                         <button class="btn btn-primary btn-sm" data-action="addtoplaylist" data-song-id="${s.id}" title="Add to playlist">+</button>
                         <button class="btn btn-danger btn-sm" data-action="delete" data-song-id="${s.id}" title="Delete">🗑️</button>
                     </div>
@@ -48,7 +49,7 @@ async function loadLibrary() {
 async function deleteSong(id) {
     if (!confirm('Delete this song from the library?')) return;
     try {
-        const res = await fetch(`/api/songs/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/songs/${id}/delete`, { method: 'DELETE' });
         const data = await res.json();
         if (data.success) { loadLibrary(); }
         else { alert('Error: ' + (data.error || 'Unknown')); }

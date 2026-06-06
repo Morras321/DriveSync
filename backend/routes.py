@@ -4,6 +4,8 @@ Maps HTTP endpoints to the library, YouTube, playlist and SD-card modules.
 """
 
 import re
+import json
+import time
 import shutil
 from pathlib import Path
 
@@ -62,6 +64,7 @@ def get_song(song_id):
 @api.route("/api/songs/<song_id>/delete", methods=["DELETE"])
 def remove_song(song_id):
     ok = delete_song(song_id)
+    print(ok)
     return jsonify({"success": ok})
 
 
@@ -158,6 +161,161 @@ def check_missing_route():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     result = check_missing_songs(url)
+    return jsonify(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  YouTube Import to Playlist
+# ═══════════════════════════════════════════════════════════════════════
+
+import_progress = {
+    "status": "idle",
+    "total": 0,
+    "existing_count": 0,
+    "missing_count": 0,
+    "downloaded": 0,
+    "playlist_id": None,
+    "playlist_name": None,
+    "added": 0,
+    "not_found": [],
+    "error": None,
+}
+
+
+@api.route("/api/playlists/import-youtube", methods=["POST"])
+def import_youtube_playlist():
+    """
+    Import a YouTube playlist: check missing songs, download them, then create a playlist.
+    Returns immediately. Poll /api/playlists/import-youtube-progress for status.
+    """
+    from youtube import _extract_playlist_entries, _song_exists_in_library, clean_url
+    from youtube import _download_playlist, _reset_progress, _download_cancel_event
+
+    data = request.json or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    clean = clean_url(url)
+
+    # Extract entries
+    entries, pl_title = _extract_playlist_entries(clean)
+    if not entries:
+        return jsonify({"error": "No entries found in playlist"}), 400
+
+    # Separate existing vs missing
+    existing_titles = []
+    existing_ids = set()
+    missing = []
+    for video_id, title in entries:
+        if _song_exists_in_library(title):
+            existing_titles.append(title)
+        else:
+            missing.append({"video_id": video_id, "title": title})
+
+    all_titles = [t for _, t in entries]
+    all_video_ids = [vid for vid, _ in entries]
+
+    # Reset progress
+    import_progress["status"] = "checking"
+    import_progress["total"] = len(all_titles)
+    import_progress["existing_count"] = len(existing_titles)
+    import_progress["missing_count"] = len(missing)
+    import_progress["downloaded"] = 0
+    import_progress["playlist_id"] = None
+    import_progress["playlist_name"] = None
+    import_progress["added"] = 0
+    import_progress["not_found"] = []
+    import_progress["error"] = None
+
+    import threading
+
+    def _create_playlist_from_results():
+        """Create playlist using all song files that now exist in the library."""
+        pl_name = pl_title[:80] + " (YouTube)" if pl_title else "YouTube Import"
+
+        pid = create_playlist(pl_name)
+
+        # Find all matching songs in library by scanning filenames
+        from library import get_all_songs
+        all_songs = get_all_songs()
+        
+        # Build a lookup: sanitized stem -> song info
+        import re
+        from config import MUSIC_DIR
+        title_to_song = {}
+        for s in all_songs:
+            clean_title = re.sub(r'[<>:"/\\|?*]', "_", s["title"])[:100]
+            title_to_song[clean_title.lower()] = s
+            title_to_song[s["title"].lower()] = s
+            title_to_song[s["id"].lower()] = s
+
+        added = 0
+        not_found = []
+        for video_id, title in entries:
+            found = False
+            # Try matching by sanitized title (matches download logic)
+            safe_title = re.sub(r'[<>:"/\\|?*]', "_", title)[:100]
+            if safe_title.lower() in title_to_song:
+                s = title_to_song[safe_title.lower()]
+                add_song(pid, s["id"])
+                added += 1
+                found = True
+            elif title.lower() in title_to_song:
+                s = title_to_song[title.lower()]
+                add_song(pid, s["id"])
+                added += 1
+                found = True
+            elif title.lower()[:50] in {k[:50] for k in title_to_song}:
+                # Fuzzy match first 50 chars
+                for key, s in title_to_song.items():
+                    if key[:50] == title.lower()[:50]:
+                        add_song(pid, s["id"])
+                        added += 1
+                        found = True
+                        break
+            if not found:
+                not_found.append(title)
+
+        import_progress["status"] = "completed"
+        import_progress["playlist_id"] = pid
+        import_progress["playlist_name"] = pl_name
+        import_progress["added"] = added
+        import_progress["not_found"] = not_found
+
+    if missing:
+        import_progress["status"] = "downloading"
+        download_progress["url"] = clean
+        download_progress["action"] = "import_youtube"
+        download_progress["import_total"] = len(missing)
+        download_progress["import_existing"] = len(existing_titles)
+
+        def _download_task():
+            _reset_progress("starting")
+            _download_cancel_event.clear()
+            # _download_playlist is synchronous -- it will block until done
+            _download_playlist(clean)
+            # After download finishes (or fails), create the playlist
+            import time as ttime
+            ttime.sleep(1)  # brief pause to let progress settle
+            _create_playlist_from_results()
+
+        threading.Thread(target=_download_task, daemon=True).start()
+    else:
+        # All songs already exist, create playlist immediately
+        _create_playlist_from_results()
+
+    return jsonify({"status": "started", "total": len(entries), "missing": len(missing)})
+
+
+@api.route("/api/playlists/import-youtube-progress")
+def import_youtube_progress():
+    """Poll import progress."""
+    result = dict(import_progress)
+    if download_progress["status"] in ("starting", "downloading", "processing", "cancelling"):
+        result["download_status"] = download_progress["status"]
+        result["download_percent"] = download_progress["percent"]
+        result["downloaded"] = download_progress.get("downloaded_count", 0)
     return jsonify(result)
 
 

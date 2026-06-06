@@ -341,9 +341,11 @@ def _extract_playlist_entries(clean_url):
     Extract all entries from a playlist URL.
     Handles pagination automatically via yt-dlp.
     Filters out None entries (unavailable/deleted videos).
-    Returns list of (video_id, title) tuples.
+    Returns (entries, playlist_title) tuple.
+    entries is a list of (video_id, title) tuples.
     """
     entries = []
+    playlist_title = None
     try:
         detect_opts = dict(_build_ydl_opts(""))
         detect_opts.pop("extract_flat", None)
@@ -355,11 +357,14 @@ def _extract_playlist_entries(clean_url):
             playlist_info = ydl.extract_info(clean_url, download=False)
 
         if not playlist_info:
-            return entries
+            return entries, None
+
+        # Get the playlist title
+        playlist_title = playlist_info.get("title")
 
         raw_entries = playlist_info.get("entries", [])
         if not raw_entries:
-            return entries
+            return entries, playlist_title
 
         for raw_entry in raw_entries:
             if raw_entry is None:
@@ -371,11 +376,11 @@ def _extract_playlist_entries(clean_url):
             elif video_id:
                 entries.append((video_id, f"video_{video_id}"))
 
-        return entries
+        return entries, playlist_title
 
     except Exception as exc:
         print(f"Playlist extraction error: {exc}")
-        return entries
+        return entries, None
 
 
 def _download_playlist(clean_url):
@@ -384,7 +389,7 @@ def _download_playlist(clean_url):
                      current="Extracting playlist entries...")
 
     # Extract entries with None-filtering
-    all_entries = _extract_playlist_entries(clean_url)
+    all_entries, _ = _extract_playlist_entries(clean_url)
 
     if not all_entries:
         _update_progress(status="error", current="No valid entries found in playlist")
@@ -544,7 +549,7 @@ def check_missing_songs(url):
         return {"total": 0, "missing": [], "existing_count": 0, "existing_titles": [], "is_playlist": False}
     
     # Playlist - extract entries and check each
-    entries = _extract_playlist_entries(clean)
+    entries, _ = _extract_playlist_entries(clean)
     if not entries:
         return {"error": "No entries found in playlist", "total": 0, "missing": [], "existing_count": 0, "existing_titles": [], "is_playlist": True}
     
