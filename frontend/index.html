@@ -194,6 +194,7 @@
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
                         <button class="btn btn-accent btn-sm" id="shuffleBtn" onclick="shufflePlaylist()">🔀 Shuffle</button>
                         <button class="btn btn-outline btn-sm" id="unshuffleBtn" style="display:none;" onclick="unshufflePlaylist()">↩ Unshuffle</button>
+                        <button class="btn btn-outline btn-sm" onclick="renameCurrentPlaylist()">✏️ Rename</button>
                         <button class="btn btn-danger btn-sm" onclick="deleteCurrentPlaylist()">🗑️</button>
                     </div>
                 </div>
@@ -273,7 +274,11 @@
                         <button class="btn btn-outline btn-sm" onclick="closeFolderDetail()">← Back to folders</button>
                         <h3 id="folderDetailName" style="margin-top:8px;"></h3>
                     </div>
-                    <button class="btn btn-accent btn-sm" onclick="addSongToCurrentFolder()">+ Add Song</button>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <button class="btn btn-accent btn-sm" id="folderShuffleBtn" onclick="shuffleCurrentFolder()">🔀 Shuffle</button>
+                        <button class="btn btn-outline btn-sm" id="folderUnshuffleBtn" style="display:none;" onclick="unshuffleCurrentFolder()">↩ Unshuffle</button>
+                        <button class="btn btn-accent btn-sm" onclick="addSongToCurrentFolder()">+ Add Song</button>
+                    </div>
                 </div>
                 <div class="text-muted" style="font-size:11px;margin:4px 0 12px;" id="folderDetailPath"></div>
                 <div id="folderSongsContainer"><p class="text-muted">Loading songs...</p></div>

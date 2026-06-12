@@ -200,6 +200,54 @@ function closeFolderDetail() {
     _currentFolderPath = null;
 }
 
+async function shuffleCurrentFolder() {
+    if (!_currentFolderPath) { alert('No folder selected'); return; }
+    const statusEl = document.getElementById('folderSongsStatus');
+    clearStatus(statusEl);
+    showStatus(statusEl, 'Shuffling folder...', 'info');
+    try {
+        const res = await fetch('/api/sdcard/folders/shuffle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: _currentFolderPath })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showStatus(statusEl, `✅ Shuffled — renamed ${data.renamed} files`, 'success');
+            viewFolderSongs(_currentFolderPath);
+            refreshDriveFolders();
+        } else {
+            showStatus(statusEl, 'Error: ' + (data.error || 'Unknown'), 'error');
+        }
+    } catch(e) {
+        showStatus(statusEl, 'Error: ' + e.message, 'error');
+    }
+}
+
+async function unshuffleCurrentFolder() {
+    if (!_currentFolderPath) { alert('No folder selected'); return; }
+    const statusEl = document.getElementById('folderSongsStatus');
+    clearStatus(statusEl);
+    showStatus(statusEl, 'Unshuffling folder...', 'info');
+    try {
+        const res = await fetch('/api/sdcard/folders/unshuffle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: _currentFolderPath })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showStatus(statusEl, `✅ Unshuffled — renamed ${data.renamed} files`, 'success');
+            viewFolderSongs(_currentFolderPath);
+            refreshDriveFolders();
+        } else {
+            showStatus(statusEl, 'Error: ' + (data.error || 'Unknown'), 'error');
+        }
+    } catch(e) {
+        showStatus(statusEl, 'Error: ' + e.message, 'error');
+    }
+}
+
 async function addSongToCurrentFolder() {
     if (!_currentFolderPath) { alert('No folder selected'); return; }
 

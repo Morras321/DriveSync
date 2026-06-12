@@ -29,9 +29,12 @@ from playlist import (
     shuffle_playlist,
     unshuffle_playlist,
     reorder_playlist,
+    rename_playlist,
+    get_playlist,
 )
 from sdcard import (get_drive_info, export_playlist, list_playlist_folders,
-                    delete_playlist_folder, list_folder_songs, add_song_to_folder)
+                    delete_playlist_folder, list_folder_songs, add_song_to_folder,
+                    shuffle_folder, unshuffle_folder)
 from config import get_storage_info
 
 api = Blueprint("api", __name__)
@@ -560,6 +563,41 @@ def sdcard_delete_folder():
         return jsonify({"error": "Folder path required"}), 400
     ok = delete_playlist_folder(folder_path)
     return jsonify({"success": ok})
+
+
+@api.route("/api/sdcard/folders/shuffle", methods=["POST"])
+def sdcard_shuffle_folder():
+    """Shuffle the song order in a folder by renaming files with numeric prefixes."""
+    data = request.json or {}
+    folder_path = data.get("folder_path")
+    if not folder_path:
+        return jsonify({"error": "Folder path required"}), 400
+    result = shuffle_folder(folder_path)
+    return jsonify(result)
+
+
+@api.route("/api/sdcard/folders/unshuffle", methods=["POST"])
+def sdcard_unshuffle_folder():
+    """Remove numeric prefixes from files in a folder (restore original names)."""
+    data = request.json or {}
+    folder_path = data.get("folder_path")
+    if not folder_path:
+        return jsonify({"error": "Folder path required"}), 400
+    result = unshuffle_folder(folder_path)
+    return jsonify(result)
+
+
+@api.route("/api/playlists/<playlist_id>/rename", methods=["POST"])
+def playlist_rename_route(playlist_id):
+    """Rename a playlist."""
+    data = request.json or {}
+    new_name = data.get("name", "").strip()
+    if not new_name:
+        return jsonify({"error": "Name required"}), 400
+    ok = rename_playlist(playlist_id, new_name)
+    if not ok:
+        return jsonify({"error": "Playlist not found"}), 404
+    return jsonify({"success": True})
 
 
 # ═══════════════════════════════════════════════════════════════════════

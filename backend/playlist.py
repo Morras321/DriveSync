@@ -85,6 +85,16 @@ def delete_playlist(playlist_id):
     return False
 
 
+def rename_playlist(playlist_id, new_name):
+    """Rename a playlist. Returns True on success."""
+    playlist = get_playlist(playlist_id)
+    if not playlist:
+        return False
+    playlist["name"] = new_name.strip() or playlist["name"]
+    save_playlist(playlist_id, playlist)
+    return True
+
+
 # ── Song manipulation ─────────────────────────────────────────────────
 
 def add_song(playlist_id, song_id):

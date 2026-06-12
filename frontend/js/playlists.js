@@ -313,6 +313,28 @@ async function deleteCurrentPlaylist() {
     } catch(e) { alert('Error deleting playlist'); }
 }
 
+async function renameCurrentPlaylist() {
+    if (!DS.currentPlaylistId) return;
+    try {
+        const res = await fetch(`/api/playlists/${DS.currentPlaylistId}`);
+        const data = await res.json();
+        if (!data || data.error) { alert('Could not load playlist'); return; }
+        const newName = prompt('Enter a new name for this playlist:', data.name);
+        if (!newName || newName.trim() === data.name) return;
+        const renameRes = await fetch(`/api/playlists/${DS.currentPlaylistId}/rename`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName.trim() })
+        });
+        const renameData = await renameRes.json();
+        if (renameData.success) {
+            viewPlaylist(DS.currentPlaylistId);
+        } else {
+            alert('Error: ' + (renameData.error || 'Failed to rename'));
+        }
+    } catch(e) { alert('Error renaming playlist'); }
+}
+
 // ── Batch Add by Artist ──────────────────────────────────────────────
 
 async function loadArtistsForBatch() {

@@ -330,6 +330,111 @@ def delete_playlist_folder(folder_path):
     return False
 
 
+# ── Shuffle / Unshuffle exported folders ─────────────────────────────
+
+def shuffle_folder(folder_path):
+    """
+    Add numeric prefixes to all MP3 files in a folder to set a shuffled order.
+    If files already have numeric prefixes, they are stripped first then re-applied
+    in random order. Does NOT copy/write songs — only renames.
+    Returns {'success': bool, 'renamed': int, 'error': str or None}.
+    """
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        return {"success": False, "renamed": 0, "error": "Folder not found"}
+
+    mp3_files = sorted(folder.glob("*.mp3"))
+    if not mp3_files:
+        return {"success": False, "renamed": 0, "error": "No MP3 files in folder"}
+
+    # Strip existing numeric prefixes first
+    _strip_numeric_prefixes(mp3_files)
+    # Re-list after potential rename
+    mp3_files = sorted(folder.glob("*.mp3"))
+    if not mp3_files:
+        return {"success": False, "renamed": 0, "error": "No MP3 files after cleanup"}
+
+    # Shuffle the list
+    import random
+    random.shuffle(mp3_files)
+
+    renamed = _apply_numeric_prefixes(mp3_files)
+    return {"success": True, "renamed": renamed, "error": None}
+
+
+def unshuffle_folder(folder_path):
+    """
+    Remove all numeric prefixes from MP3 files in a folder (e.g. '001_Song.mp3' -> 'Song.mp3').
+    Does NOT copy/write songs — only renames.
+    Returns {'success': bool, 'renamed': int, 'error': str or None}.
+    """
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        return {"success": False, "renamed": 0, "error": "Folder not found"}
+
+    mp3_files = list(folder.glob("*.mp3"))
+    if not mp3_files:
+        return {"success": False, "renamed": 0, "error": "No MP3 files in folder"}
+
+    renamed = 0
+    for f in sorted(mp3_files):
+        # Match prefix like "001_", "123_" etc.
+        match = re.match(r'^(\d{3})_(.+)\.mp3$', f.name)
+        if match:
+            new_name = f"{match.group(2)}.mp3"
+            # Avoid collision
+            new_path = f.parent / new_name
+            counter = 1
+            while new_path.exists():
+                stem = Path(new_name).stem
+                new_path = f.parent / f"{stem}_{counter}.mp3"
+                counter += 1
+            try:
+                f.rename(new_path)
+                renamed += 1
+            except Exception:
+                pass
+    return {"success": True, "renamed": renamed, "error": None}
+
+
+def _strip_numeric_prefixes(mp3_files):
+    """Remove numeric 'NNN_' prefixes from a list of MP3 file paths (in-place rename)."""
+    for f in sorted(mp3_files):
+        match = re.match(r'^(\d{3})_(.+)\.mp3$', f.name)
+        if match:
+            new_name = f"{match.group(2)}.mp3"
+            new_path = f.parent / new_name
+            counter = 1
+            while new_path.exists():
+                stem = Path(new_name).stem
+                new_path = f.parent / f"{stem}_{counter}.mp3"
+                counter += 1
+            try:
+                f.rename(new_path)
+            except Exception:
+                pass
+
+
+def _apply_numeric_prefixes(mp3_files):
+    """
+    Rename MP3 files with 3-digit prefixes (001_, 002_, etc.) in the order given.
+    Returns the count of renamed files.
+    """
+    renamed = 0
+    for i, f in enumerate(mp3_files):
+        prefix = f"{i+1:03d}_"
+        if f.name.startswith(prefix):
+            continue
+        new_name = f"{prefix}{f.name}"
+        new_path = f.parent / new_name
+        try:
+            f.rename(new_path)
+            renamed += 1
+        except Exception:
+            pass
+    return renamed
+
+
 # ── Export ─────────────────────────────────────────────────────────────
 
 def export_playlist(playlist_id, drive_path, subfolder="", shuffle_prefix=False):
@@ -342,7 +447,7 @@ def export_playlist(playlist_id, drive_path, subfolder="", shuffle_prefix=False)
     if drive_path not in drives and not any(drive_path.startswith(d) for d in drives):
         return {"error": f"Drive not found at {drive_path}"}
 
-    name = re.sub(r'[<>:"/\\|?*\s]', "_", playlist["name"])
+    name = re.sub(r'[<>:"/\\|*\s]', "_", playlist["name"])
     dest = Path(drive_path)
     if subfolder:
         dest = dest / subfolder

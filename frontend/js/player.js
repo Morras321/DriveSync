@@ -140,6 +140,39 @@ function playerUpdateNowPlaying(song) {
         img.style.display = 'none';
         placeholder.style.display = 'inline';
     }
+
+    // Media Session API - Update lockscreen / notification with song info & thumbnail
+    if ('mediaSession' in navigator) {
+        const artwork = [];
+        if (song.has_thumbnail) {
+            // Use the thumbnail as album art
+            artwork.push({
+                src: `/api/thumbnails/${song.id}.jpg`,
+                sizes: '300x300',
+                type: 'image/jpeg'
+            });
+        }
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: song.title || 'Unknown',
+            artist: song.artist || '—',
+            album: 'DriveSync',
+            artwork: artwork
+        });
+
+        // Set up action handlers (only need to set once)
+        if (!navigator.mediaSession._handlersSet) {
+            navigator.mediaSession._handlersSet = true;
+            navigator.mediaSession.setActionHandler('play', () => playerTogglePlay());
+            navigator.mediaSession.setActionHandler('pause', () => playerTogglePlay());
+            navigator.mediaSession.setActionHandler('previoustrack', () => playerPrev());
+            navigator.mediaSession.setActionHandler('nexttrack', () => playerNext());
+            navigator.mediaSession.setActionHandler('seekto', (details) => {
+                if (Player.audio && Player.audio.duration) {
+                    Player.audio.currentTime = details.seekTime;
+                }
+            });
+        }
+    }
 }
 
 /** Toggle play/pause for the player */
